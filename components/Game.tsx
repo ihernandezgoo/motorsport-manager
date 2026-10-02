@@ -1,13 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { SERIES_NAMES, SERIES_SHORT } from "@/lib/game/data/teams";
-import { formatDateLong } from "@/lib/game/format";
+import { SERIES_NAMES } from "@/lib/game/data/teams";
 import { newQuickWeekend } from "@/lib/game/quick";
-import { isSeasonOver } from "@/lib/game/season";
 import type { GameState, QuickConfig } from "@/lib/game/types";
 import { liveRace } from "@/lib/liveRace";
-import { gameStore, useGame, useHydrated } from "@/lib/store";
+import { gameStore, useGame, useHydrated, type CareerSlot, type Slot } from "@/lib/store";
 import { CalendarView } from "./screens/CalendarView";
 import { DevelopmentView } from "./screens/DevelopmentView";
 import { GridsView } from "./screens/GridsView";
@@ -30,6 +28,7 @@ export default function Game() {
   const [mode, setMode] = useState<Mode>("menu");
   const [view, setView] = useState<View>("hq");
   const [summary, setSummary] = useState<number | null>(null);
+  const [newSlot, setNewSlot] = useState<CareerSlot>(1);
 
   useEffect(() => {
     gameStore.load();
@@ -39,26 +38,32 @@ export default function Game() {
     return <div className="grid h-dvh place-items-center text-sm text-muted">Cargando…</div>;
   }
 
+  /** Abre una ranura. La carrera en directo pertenece a la partida abierta: si cambia, se descarta. */
+  const openSlot = (slot: Slot) => {
+    if (gameStore.slot() === slot && gameStore.get()) return true;
+    liveRace.dispose();
+    return gameStore.open(slot);
+  };
+
   const startQuick = (cfg: QuickConfig) => {
     liveRace.dispose();
-    gameStore.switchSlot("quick");
-    gameStore.set(newQuickWeekend(cfg, Math.floor(Math.random() * 2 ** 31)));
+    gameStore.create("quick", newQuickWeekend(cfg, Math.floor(Math.random() * 2 ** 31)));
     setMode("quick");
   };
   const exitQuick = () => {
     liveRace.dispose();
-    gameStore.set(null);
-    gameStore.switchSlot("career");
+    gameStore.remove("quick");
     setMode("menu");
   };
 
   if (mode === "new") {
     return (
       <NewGame
+        slot={newSlot}
         onCancel={() => setMode("menu")}
         onCreate={(s) => {
           liveRace.dispose();
-          gameStore.set(s);
+          gameStore.create(newSlot, s);
           setView("hq");
           setSummary(null);
           setMode("play");
@@ -74,26 +79,22 @@ export default function Game() {
   }
 
   if (mode !== "play" || !state || state.quick) {
-    const career = state && !state.quick ? state : null;
-    const label = career
-      ? `${career.teams[career.player.teamId].name} · ${SERIES_SHORT[career.player.series]} ${career.year} · ${
-          isSeasonOver(career) ? "temporada terminada" : `próximo: ${formatDateLong(career.calendar[career.nextWeekend].date)}`
-        }`
-      : undefined;
     return (
       <MainMenu
-        hasSave={!!career}
-        saveLabel={label}
         hasQuick={gameStore.hasQuick()}
-        onContinue={() => {
-          setView(career?.weekend ? "weekend" : "hq");
+        onPlay={(slot) => {
+          if (!openSlot(slot)) return window.alert("No se ha podido abrir la partida.");
+          setView(gameStore.get()?.weekend ? "weekend" : "hq");
+          setSummary(null);
           setMode("play");
         }}
-        onNew={() => setMode("new")}
+        onNew={(slot) => {
+          setNewSlot(slot);
+          setMode("new");
+        }}
         onQuick={() => setMode("quickSetup")}
         onResumeQuick={() => {
-          gameStore.switchSlot("quick");
-          setMode("quick");
+          if (openSlot("quick")) setMode("quick");
         }}
       />
     );

@@ -74,7 +74,6 @@ export const F2_TEAMS = teams("f2", 85, [
 ]);
 
 export const F3_TEAMS = teams("f3", 85, [
-  ["f3_invicta", "Invicta Racing", "Invicta", "#C6FF00", "#1b1b1b", "GBR", 88, 88, 86, 84, 88, 84, 1.3, 0.2],
   ["f3_campos", "Campos Racing", "Campos", "#FF7A00", "#1E3A8A", "ESP", 88, 88, 86, 84, 88, 84, 1.3, 0.2],
   ["f3_trident", "Trident", "Trident", "#60A5FA", "#0B1F4D", "ITA", 85, 86, 85, 84, 86, 82, 1.2, 0.19],
   ["f3_mp", "MP Motorsport", "MP", "#F43F5E", "#FFFFFF", "NED", 85, 85, 85, 84, 85, 84, 1.2, 0.19],

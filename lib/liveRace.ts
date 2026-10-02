@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { helmetOf } from "./game/data/liveries";
-import { RaceSim, type LapStatus, type RaceConfig, type RaceEvent } from "./game/race";
+import { RaceSim, type LapStatus, type RaceConfig, type RaceEvent, type TeamOrder } from "./game/race";
 import { scoreResult } from "./game/season";
 import type { Plan } from "./game/strategy";
 import type { Compound, DrivingStyle, EngineMode, ErsMode, RaceKind, RaceResult, SeriesId } from "./game/types";
@@ -41,6 +41,8 @@ export interface LiveDot {
   accent: string;
   progress: number;
   inPit: boolean;
+  /** Parado en su garaje. */
+  boxed: boolean;
   out: boolean;
   isPlayer: boolean;
   pos: number;
@@ -91,8 +93,11 @@ export interface LivePlayer {
   pits: number;
   penalty: number;
   aeroDamage: number;
+  floorDamage: number;
   powerLoss: number;
   needsOther: boolean;
+  /** Último mensaje de radio reciente del piloto. */
+  radio: string | null;
 }
 
 export interface LiveSnapshot {
@@ -123,9 +128,13 @@ export interface LiveSnapshot {
   fastest: { id: string; code: string; time: number; lap: number } | null;
   pauseReason: string | null;
   result: RaceResult | null;
+  /** Carrera suspendida por bandera roja: segundos (de carrera) hasta la salida parada. */
+  redFlag: { restartIn: number } | null;
+  /** Orden de equipo vigente para los coches del jugador. */
+  teamOrder: TeamOrder;
 }
 
-const IMPORTANT: RaceEvent["type"][] = ["sc", "vsc", "weather"];
+const IMPORTANT: RaceEvent["type"][] = ["sc", "vsc", "red", "weather"];
 
 class LiveRaceStore {
   private sim: RaceSim | null = null;
@@ -155,6 +164,7 @@ class LiveRaceStore {
   start(key: string, cfg: RaceConfig, opts: { auto: Record<string, boolean>; speed: number; autoPause: boolean }) {
     this.dispose();
     this.sim = new RaceSim(cfg);
+    this.sim.keepHistory = true;
     this.key = key;
     this.clock = 0;
     this.speed = opts.speed;
@@ -229,12 +239,62 @@ class LiveRaceStore {
     this.sim?.setErs(id, e);
     this.emit();
   }
+  /**
+   * Pide (o cancela) una parada. Si el coche aún no ha pasado la entrada del pit lane, entra en esta
+   * misma vuelta; si no, en la siguiente. Como el simulador calcula las vueltas por adelantado, se
+   * rebobina a esa vuelta y se recalcula con la nueva orden.
+   */
   requestPit(id: string, c: Compound | null) {
-    this.sim?.requestPit(id, c);
+    const sim = this.sim;
+    if (!sim) return;
+    const car = sim.cars.find((x) => x.driverId === id);
+    if (car?.status === "run") {
+      const current = sim.completedAt(car, this.clock).k + 1;
+      const target = sim.pitThisLap(id, this.clock) ?? current + 1;
+      if (target < sim.totalLaps && sim.lap >= target) this.rewind(target);
+    }
+    sim.requestPit(id, c);
+    this.ensureComputed();
+    this.skipPastEvents();
     this.emit();
+  }
+
+  /** Vuelve al inicio de la vuelta `lap` conservando las órdenes actuales del jugador. */
+  private rewind(lap: number) {
+    const sim = this.sim;
+    if (!sim) return;
+    const mine = sim.cars.filter((c) => c.isPlayer);
+    const keep = mine.map((c) => ({ id: c.driverId, style: c.style, engine: c.engine, ers: c.ers, auto: c.auto, pit: c.pitRequest }));
+    const orders = [...sim.teamOrders];
+    if (!sim.rewindToLap(lap)) return;
+    for (const k of keep) {
+      sim.setStyle(k.id, k.style);
+      sim.setEngine(k.id, k.engine);
+      sim.setErs(k.id, k.ers);
+      // Activar la IA recalcula la estrategia (consume azar): solo si el modo cambió de verdad.
+      if (sim.cars.find((c) => c.driverId === k.id)?.auto !== k.auto) sim.setAuto(k.id, k.auto);
+      sim.requestPit(k.id, k.pit);
+    }
+    sim.teamOrders.clear();
+    for (const [team, o] of orders) sim.teamOrders.set(team, o);
+    // Los sucesos recalculados vuelven a generarse: se olvidan los índices que ya no existen.
+    for (const i of [...this.handled]) if (i >= sim.events.length) this.handled.delete(i);
+  }
+
+  /** Marca como vistos los sucesos ya pasados (tras recalcular no deben volver a pausar la carrera). */
+  private skipPastEvents() {
+    this.sim?.events.forEach((e, i) => {
+      if (e.time <= this.clock) this.handled.add(i);
+    });
   }
   setAuto(id: string, auto: boolean) {
     this.sim?.setAuto(id, auto);
+    this.emit();
+  }
+  setTeamOrder(order: TeamOrder) {
+    const team = this.sim?.cars.find((c) => c.isPlayer)?.teamId;
+    if (!this.sim || !team) return;
+    this.sim.setTeamOrder(team, order);
     this.emit();
   }
 
@@ -359,6 +419,7 @@ class LiveRaceStore {
     const dots: LiveDot[] = sim.cars.map((c) => {
       const out = c.status === "dnf" && c.dnfTime !== undefined && clock >= c.dnfTime;
       const ls = live.get(c.driverId);
+      const lane = out ? null : sim.laneAt(c, clock);
       return {
         id: c.driverId,
         teamId: c.teamId,
@@ -369,7 +430,8 @@ class LiveRaceStore {
         color: c.color,
         accent: c.accent,
         progress: sim.progressAt(c, clock),
-        inPit: sim.inPitAt(c, clock),
+        inPit: lane !== null,
+        boxed: lane?.boxed ?? false,
         out,
         isPlayer: c.isPlayer,
         pos: posOf.get(c.driverId)?.pos ?? 99,
@@ -382,11 +444,20 @@ class LiveRaceStore {
       if (!r || r.out) return null;
       return { pos: r.pos, number: r.number, code: r.code, color: r.color, gap };
     };
+    // Un mensaje de radio se muestra en el panel del piloto durante un tercio de vuelta.
+    const lastRadio = (id: string) => {
+      let best: RaceEvent | null = null;
+      for (const e of sim.events) {
+        if (e.type === "radio" && e.drivers[0] === id && e.time <= clock && clock - e.time < sim.base * 0.35 && (!best || e.time > best.time)) best = e;
+      }
+      return best ? best.text.replace(/^[^:]+:\s*/, "") : null;
+    };
     const players: LivePlayer[] = sim.cars
       .filter((c) => c.isPlayer)
       .map((c) => {
         const ls = live.get(c.driverId) ?? sim.liveState(c, clock);
         const row = posOf.get(c.driverId);
+        const upcoming = c.visits.find((v) => v.entry > clock);
         const prog = sim.progressAt(c, clock);
         const lapsLeft = Math.max(0, sim.totalLaps - prog);
         const k = Math.max(0, Math.min(c.laps.length - 1, Math.floor(prog) - 1));
@@ -411,8 +482,9 @@ class LiveRaceStore {
           engine: c.engine,
           ers: c.ers,
           auto: c.auto,
-          pitRequest: c.pitRequest,
-          pitLap: c.laps.length + 1,
+          // Parada pendiente: pedida y aún sin calcular, o ya calculada para una vuelta en la que todavía no ha entrado.
+          pitRequest: c.pitRequest ?? (upcoming ? c.laps[upcoming.lap - 1]?.pitCompound ?? null : null),
+          pitLap: upcoming && !c.pitRequest ? upcoming.lap : c.laps.length + 1,
           compound: ls.compound,
           wear: ls.wear,
           wearRate,
@@ -421,7 +493,8 @@ class LiveRaceStore {
           fuelMargin: ls.fuel - lapsLeft,
           fuelPerLap,
           battery: ls.battery,
-          currentLap: Math.max(1, Math.min(sim.totalLaps, Math.floor(prog) + 1)),
+          // Vueltas completadas en la línea de meta (un coche parado en parrilla tras la meta ya completó la suya).
+          currentLap: Math.max(1, Math.min(sim.totalLaps, sim.completedAt(c, clock).k + 1)),
           lapProgress: Math.max(0, prog - Math.floor(prog)),
           lastLap: row?.lastLap ?? 0,
           bestLap: c.bestLap,
@@ -430,8 +503,10 @@ class LiveRaceStore {
           pits: row?.pits ?? 0,
           penalty: c.penalty,
           aeroDamage: c.damage,
+          floorDamage: c.floorDamage,
           powerLoss: c.powerLoss,
           needsOther: sim.cfg.mustTwo && !c.usedWet && new Set(c.usedDry).size < 2,
+          radio: lastRadio(c.driverId),
         };
       });
     const events = sim.events
@@ -459,7 +534,7 @@ class LiveRaceStore {
       lap,
       totalLaps: sim.totalLaps,
       baseLap: sim.base,
-      status: this.finished ? "green" : sim.statusAt(clock),
+      status: this.finished ? "green" : sim.redFlagAt(clock) ? "red" : sim.statusAt(clock),
       wet: sim.wetByLap[wIdx] ?? sim.wet,
       rain: sim.rainByLap[wIdx] ?? 0,
       trackTemp: Math.round(sim.cfg.weather.trackTemp - (sim.rainByLap[wIdx] ?? 0) * 10),
@@ -474,6 +549,11 @@ class LiveRaceStore {
         fastestVisible && sim.fastest && fastestCar ? { id: fastestCar.driverId, code: fastestCar.code, time: sim.fastest.time, lap: sim.fastest.lap } : null,
       pauseReason: this.pauseReason,
       result: this.finished && sim.done ? scoreResult(sim.toResult()) : null,
+      redFlag: (() => {
+        const r = sim.redFlagAt(clock);
+        return r ? { restartIn: r.restart - clock } : null;
+      })(),
+      teamOrder: sim.teamOrders.get(sim.cars.find((c) => c.isPlayer)?.teamId ?? "") ?? "free",
     };
   }
 }

@@ -70,13 +70,15 @@ function MiniCar({ color, me }: { color: string; me?: boolean }) {
   );
 }
 
-function CarDiagram({ wear, aero, power }: { wear: number; aero: number; power: number }) {
+function CarDiagram({ wear, aero, floor, power }: { wear: number; aero: number; floor: number; power: number }) {
   const tyre = wear > 75 ? "#ef4444" : wear > 50 ? "#f59e0b" : "#22c55e";
   return (
     <svg viewBox="0 0 30 60" width={30} height={60} aria-label="Estado del coche">
+      <title>{`Alerón ${aero > 0.05 ? "dañado" : "OK"} · fondo ${floor > 0.05 ? "dañado" : "OK"} · motor ${power > 0.05 ? "con problemas" : "OK"}`}</title>
       <rect x={3} y={3} width={24} height={4} rx={1} fill={aero > 0.05 ? "#ef4444" : "#4b5563"} />
       <rect x={2} y={10} width={5} height={10} rx={1.5} fill={tyre} />
       <rect x={23} y={10} width={5} height={10} rx={1.5} fill={tyre} />
+      {floor > 0.05 && <path d="M8,22 L22,22 L23,48 L7,48 Z" fill="#dc2626" opacity={0.75} />}
       <path d="M12,7 L18,7 L20,24 L21,46 L9,46 L10,24 Z" fill="#6b7280" />
       <rect x={11} y={30} width={8} height={10} rx={1} fill={power > 0.05 ? "#f97316" : "#374151"} />
       <rect x={1} y={40} width={6} height={12} rx={1.5} fill={tyre} />
@@ -133,6 +135,7 @@ export function DriverPanel({
   if (p.fuelMargin < 0) alerts.push({ text: "Combustible justo: levantando el pie", bad: true });
   if (p.needsOther && snap.totalLaps - snap.lap < 15) alerts.push({ text: "Falta usar otro compuesto", bad: snap.totalLaps - snap.lap < 5 });
   if (p.aeroDamage > 0.05) alerts.push({ text: "Alerón dañado: cámbialo en boxes", bad: true });
+  if (p.floorDamage > 0.05) alerts.push({ text: `Fondo dañado (−${p.floorDamage.toFixed(1)} %): no se puede reparar` });
   if (p.powerLoss > 0.05) alerts.push({ text: "Problema de motor", bad: true });
   if (p.penalty > 0) alerts.push({ text: `Penalización +${p.penalty} s` });
   if (p.auto) alerts.unshift({ text: "El ingeniero (IA) controla este coche" });
@@ -141,6 +144,13 @@ export function DriverPanel({
 
   return (
     <div className="relative w-full select-none">
+      {p.radio && (
+        <div className="mb-1 flex max-w-full items-center gap-2 rounded-lg bg-[#0e7490]/95 px-2.5 py-1 text-xs font-semibold text-white shadow-lg">
+          <Headset className="h-3.5 w-3.5 shrink-0" />
+          <span className="font-black uppercase">{p.last}</span>
+          <span className="truncate italic">{p.radio}</span>
+        </div>
+      )}
       {alerts.length > 0 && !locked && (
         <div className="mb-1 flex flex-wrap gap-1">
           {alerts.map((a) => (
@@ -179,6 +189,8 @@ export function DriverPanel({
               );
             })}
           </div>
+          {snap.redFlag && <div className="mt-2 text-[11px] font-semibold text-[#fca5a5]">Bandera roja: el cambio es gratuito y se hace en la salida parada.</div>}
+          {!snap.redFlag && p.aeroDamage > 0.05 && <div className="mt-2 text-[11px] text-white/70">Se cambiará también el alerón delantero (+6 s de parada).</div>}
           {suggestion && <div className="mt-2 text-[11px] text-white/70">Plan del ingeniero desde aquí: <b className="text-white">{describePlan(suggestion)}</b></div>}
           {p.pitRequest && (
             <button
@@ -399,7 +411,7 @@ export function DriverPanel({
             </div>
           </div>
           <div className="grid place-items-center bg-[#1b1e25]">
-            <CarDiagram wear={p.wear} aero={p.aeroDamage} power={p.powerLoss} />
+            <CarDiagram wear={p.wear} aero={p.aeroDamage} floor={p.floorDamage} power={p.powerLoss} />
           </div>
         </div>
       )}

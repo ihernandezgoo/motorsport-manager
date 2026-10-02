@@ -46,6 +46,18 @@ export interface TrackScene {
   env: SceneryOut;
   grid: { x: number; y: number; angle: number }[];
   sf: { x: number; y: number; angle: number };
+  /** Medio carril de boxes (m) a cada lado de la meta y lado de la pista (+1/-1) donde está. */
+  pitHalf: number;
+  side: number;
+}
+
+/**
+ * Desplazamiento lateral (m, con signo según el lado) del carril de boxes respecto al eje de la
+ * pista a `s` metros de la meta. `boxed` acerca el coche a su garaje.
+ */
+export function pitLaneOffset(t: TrackScene, s: number, boxed = false): number {
+  const edge = Math.min(1, Math.max(0, (t.pitHalf + 60 - Math.abs(s)) / 60));
+  return (boxed ? 30 : 24 * edge) * t.side;
 }
 
 const cache = new Map<string, TrackScene>();
@@ -224,6 +236,8 @@ export function trackScene(circuitId: string): TrackScene {
     env,
     grid,
     sf: { x: pts[0][0], y: pts[0][1], angle: (heading[0] * 180) / Math.PI },
+    pitHalf,
+    side,
   };
   cache.set(circuitId, scene);
   return scene;

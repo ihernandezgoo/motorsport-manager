@@ -1,5 +1,5 @@
 import { basePct, baseLap, reliabilityRating, SERIES_CFG } from "./perf";
-import { clamp, gauss, mulberry32, pick, range, type Rng } from "./rng";
+import { clamp, gauss, hashString, mulberry32, pick, range, type StatefulRng } from "./rng";
 import { planStrategy, wearRate, type PlannedStop } from "./strategy";
 import { dryCompounds, isWetTyre, spec, TEMP_WINDOW, tempPenalty, tempWearFactor, wearPenalty, wetPenalty } from "./tyres";
 import type {
@@ -34,11 +34,18 @@ const ERS_CHARGE = [14, 3, -16];
 const FUEL_MARGIN = 0.6;
 
 const MECH_FAILURES = ["Fallo de motor", "Fallo hidráulico", "Caja de cambios", "Fallo eléctrico", "Problema de frenos", "Pérdida de presión de aceite"];
+/** Separación (s) entre coches en una salida parada. */
+const GRID_GAP = 0.22;
+/** Duración de la suspensión por bandera roja (tiempo de carrera, s). */
+const RED_FLAG_PAUSE = 75;
 
-export type LapStatus = "green" | "sc" | "vsc";
+export type LapStatus = "green" | "sc" | "vsc" | "red";
+export type TeamOrder = "free" | "hold" | "swap";
 
 export interface LapRecord {
   lap: number;
+  /** Instante en que el coche empieza la vuelta (tras una bandera roja, la reanudación). */
+  start: number;
   time: number;
   end: number;
   compound: Compound;
@@ -47,8 +54,30 @@ export interface LapRecord {
   fuel: number;
   battery: number;
   pos: number;
+  /** Tiempo perdido en el carril de boxes durante esta vuelta (entrada o salida). */
   pitTime: number;
   pitCompound?: Compound;
+  /** Fracción de vuelta por detrás de la meta donde el coche queda parado al acabar la vuelta (parrilla tras bandera roja). */
+  parkOff?: number;
+}
+
+/**
+ * Paso por el carril de boxes. La meta está dentro del carril: la vuelta `lap` termina al cruzarla
+ * y la siguiente empieza dentro del pit lane. Las posiciones son fracciones de vuelta respecto a la meta.
+ */
+export interface PitVisit {
+  lap: number;
+  entry: number;
+  line: number;
+  exit?: number;
+  inFrac: number;
+  outFrac: number;
+  box: number;
+  stationary: number;
+  /** Tiempo de la parada que se pierde después de la meta (en la vuelta de salida). */
+  tout: number;
+  stopStart: number;
+  stopEnd: number;
 }
 
 export interface CarState {
@@ -84,8 +113,16 @@ export interface CarState {
   pitRequest: Compound | null;
   pits: number;
   penalty: number;
+  /** Daño en el alerón delantero (% de ritmo). Se repara en boxes. */
   damage: number;
+  /** Daño en el fondo plano (% de ritmo). No se puede reparar durante la carrera. */
+  floorDamage: number;
   powerLoss: number;
+  visits: PitVisit[];
+  /** Tiempo de boxes pendiente de la vuelta de salida. */
+  pitCarry: number;
+  /** Vuelta a partir de la cual cada tipo de mensaje de radio se puede repetir. */
+  radioCooldown: Record<string, number>;
   bestLap: number;
   bestLapNo: number;
   plan: PlannedStop[];
@@ -98,7 +135,21 @@ export interface CarState {
   finishTime?: number;
 }
 
-export type RaceEventType = "overtake" | "pit" | "dnf" | "sc" | "vsc" | "restart" | "weather" | "incident" | "penalty" | "fastest" | "info";
+export type RaceEventType =
+  | "overtake"
+  | "pit"
+  | "dnf"
+  | "sc"
+  | "vsc"
+  | "red"
+  | "restart"
+  | "weather"
+  | "incident"
+  | "penalty"
+  | "fastest"
+  | "info"
+  | "radio"
+  | "order";
 
 export interface RaceEvent {
   time: number;
@@ -140,6 +191,64 @@ export interface TowerRow {
   interval: string;
 }
 
+/** Estado mutable de la simulación al empezar una vuelta. */
+interface SimSnapshot {
+  scalars: {
+    lap: number;
+    done: boolean;
+    wet: number;
+    rain: number;
+    trackTemp: number;
+    scLaps: number;
+    winnerTime: number | null;
+    maxRain: number;
+    maxWet: number;
+    redLap: number;
+    restartLap: number;
+  };
+  sc: RaceSim["sc"];
+  fastest: RaceSim["fastest"];
+  pendingSc: { kind: "sc" | "vsc" | "red"; time: number } | null;
+  lens: { wet: number; rain: number; status: number; events: number; redFlags: number };
+  teamOrders: [string, TeamOrder][];
+  orderRefusals: [string, number][];
+  trackLimits: [string, number][];
+  rng: number;
+  radioRng: number;
+  /** Estado de cada coche; de su lista de vueltas solo se guarda la longitud (las vueltas ya cerradas no cambian). */
+  cars: (Omit<CarState, "laps"> & { lapsLen: number })[];
+}
+
+/** Interpolación lineal por tramos de `points` ([tiempo, valor], ordenados por tiempo) en el instante `t`. */
+function interpolate(points: [number, number][], t: number): number {
+  if (t <= points[0][0]) return points[0][1];
+  for (let i = 1; i < points.length; i++) {
+    const [t0, v0] = points[i - 1];
+    const [t1, v1] = points[i];
+    if (t <= t1) return t1 > t0 ? v0 + ((t - t0) / (t1 - t0)) * (v1 - v0) : v1;
+  }
+  return points[points.length - 1][1];
+}
+
+/**
+ * Carril de boxes en fracciones de vuelta respecto a la meta, con la misma geometría que
+ * `trackScene` (lib/game/geo.ts): el carril va de -(pitHalf + 60) m a +(pitHalf + 60) m y cada
+ * equipo tiene dos garajes consecutivos, en el orden en que aparecen sus equipos.
+ */
+export function pitLaneGeometry(cfg: Pick<RaceConfig, "circuit" | "teams" | "series">) {
+  const total = cfg.circuit.lengthKm * 1000;
+  const pitHalf = Math.min(320, total * 0.07);
+  const lane = (pitHalf + 60) / total;
+  const box = new Map<string, number>();
+  Object.values(cfg.teams)
+    .filter((t) => t.series === cfg.series)
+    .forEach((t, k) => {
+      const s = Math.min(pitHalf - 20, -pitHalf + 20 + 15 * (2 * k + 0.5));
+      box.set(t.id, s / total);
+    });
+  return { inFrac: lane, outFrac: lane, box };
+}
+
 export class RaceSim {
   readonly cfg: RaceConfig;
   readonly series: SeriesId;
@@ -165,12 +274,26 @@ export class RaceSim {
   scLaps = 0;
   fastest: { driverId: string; time: number; lap: number } | null = null;
   winnerTime: number | null = null;
-  private rng: Rng;
+  /** Suspensiones por bandera roja: vuelta lenta, primera llegada a parrilla y reanudación. */
+  redFlags: { lap: number; from: number; restart: number }[] = [];
+  readonly teamOrders = new Map<string, TeamOrder>();
+  private rng: StatefulRng;
+  /** Generador aparte para la radio: los mensajes no alteran el resto de la simulación. */
+  private radioRng: StatefulRng;
+  /** Estado al empezar cada vuelta (índice = vueltas ya calculadas), para poder rebobinar. */
+  private history: SimSnapshot[] = [];
+  /** Guarda instantáneas al empezar cada vuelta. Solo hace falta en la carrera en directo. */
+  keepHistory = false;
   private startFuel: number;
-  private pendingSc: { kind: "sc" | "vsc"; time: number } | null = null;
+  private pendingSc: { kind: "sc" | "vsc" | "red"; time: number } | null = null;
+  private redLap = 0;
+  private restartLap = 0;
+  private orderRefusals = new Map<string, number>();
   private trackLimits = new Map<string, number>();
   private maxRain = 0;
   private maxWet = 0;
+  /** Geometría del pit lane en fracciones de vuelta (mismo modelo que el escenario dibujado). */
+  private pitLane: { inFrac: number; outFrac: number; box: Map<string, number> };
 
   constructor(cfg: RaceConfig) {
     this.cfg = cfg;
@@ -181,6 +304,8 @@ export class RaceSim {
     this.dry = dryCompounds(cfg.series, cfg.circuit);
     this.hasErs = SERIES_CFG[cfg.series].hasErs;
     this.rng = mulberry32(cfg.seed);
+    this.radioRng = mulberry32(cfg.seed ^ 0x5bd1e995);
+    this.pitLane = pitLaneGeometry(cfg);
     this.wet = cfg.weather.initialWetness;
     this.trackTemp = cfg.weather.trackTemp;
     this.startFuel = cfg.laps + FUEL_MARGIN;
@@ -245,7 +370,11 @@ export class RaceSim {
       pits: 0,
       penalty: 0,
       damage: 0,
+      floorDamage: 0,
       powerLoss: 0,
+      visits: [],
+      pitCarry: 0,
+      radioCooldown: {},
       bestLap: Infinity,
       bestLapNo: 0,
       plan,
@@ -310,6 +439,109 @@ export class RaceSim {
   requestPit(id: string, c: Compound | null) {
     this.car(id).pitRequest = c;
   }
+  /** Orden de equipo: libre, mantener posiciones o que el de delante deje pasar al compañero. */
+  setTeamOrder(teamId: string, order: TeamOrder) {
+    this.teamOrders.set(teamId, order);
+    this.orderRefusals.delete(teamId);
+    if (order === "free") return;
+    const cars = this.running()
+      .filter((c) => c.teamId === teamId && c.isPlayer)
+      .sort((a, b) => a.cum - b.cum);
+    const time = Math.max(0, ...cars.map((c) => c.cum));
+    if (order === "hold" && cars.length > 1) {
+      this.log(time, this.lap, "order", `📻 Orden de equipo: mantened posiciones`, cars.map((c) => c.driverId));
+      for (const c of cars) this.radio(c, "order", "Recibido, mantengo la posición", time, 0);
+    }
+  }
+  // ───────────────────────────── rebobinado ─────────────────────────────
+
+  /** Generador con semilla propia para un suceso concreto (parada, duelo...). */
+  private localRng(...parts: (string | number)[]) {
+    return mulberry32(hashString(`${this.cfg.seed}|${parts.join("|")}`));
+  }
+
+  private snapshot(): SimSnapshot {
+    return {
+      scalars: {
+        lap: this.lap,
+        done: this.done,
+        wet: this.wet,
+        rain: this.rain,
+        trackTemp: this.trackTemp,
+        scLaps: this.scLaps,
+        winnerTime: this.winnerTime,
+        maxRain: this.maxRain,
+        maxWet: this.maxWet,
+        redLap: this.redLap,
+        restartLap: this.restartLap,
+      },
+      sc: { ...this.sc },
+      fastest: this.fastest && { ...this.fastest },
+      pendingSc: this.pendingSc && { ...this.pendingSc },
+      lens: { wet: this.wetByLap.length, rain: this.rainByLap.length, status: this.statusByLap.length, events: this.events.length, redFlags: this.redFlags.length },
+      teamOrders: [...this.teamOrders],
+      orderRefusals: [...this.orderRefusals],
+      trackLimits: [...this.trackLimits],
+      rng: this.rng.getState(),
+      radioRng: this.radioRng.getState(),
+      cars: this.cars.map(({ laps, ...rest }) => ({ ...structuredClone(rest), lapsLen: laps.length })),
+    };
+  }
+
+  private restore(s: SimSnapshot) {
+    Object.assign(this, s.scalars);
+    this.sc = { ...s.sc };
+    this.fastest = s.fastest && { ...s.fastest };
+    this.pendingSc = s.pendingSc && { ...s.pendingSc };
+    this.wetByLap.length = s.lens.wet;
+    this.rainByLap.length = s.lens.rain;
+    this.statusByLap.length = s.lens.status;
+    this.events.length = s.lens.events;
+    this.redFlags.length = s.lens.redFlags;
+    this.teamOrders.clear();
+    for (const [k, v] of s.teamOrders) this.teamOrders.set(k, v);
+    this.orderRefusals = new Map(s.orderRefusals);
+    this.trackLimits = new Map(s.trackLimits);
+    this.rng.setState(s.rng);
+    this.radioRng.setState(s.radioRng);
+    s.cars.forEach(({ lapsLen, ...saved }, i) => {
+      const car = this.cars[i];
+      const laps = car.laps;
+      laps.length = lapsLen;
+      Object.assign(car, structuredClone(saved), { laps });
+    });
+  }
+
+  /**
+   * Vuelve al principio de la vuelta `lap` (1..N) para recalcularla. Devuelve false si no hay
+   * instantánea de esa vuelta.
+   */
+  rewindToLap(lap: number): boolean {
+    const snap = this.history[lap - 1];
+    if (!snap) return false;
+    this.restore(snap);
+    this.history.length = lap - 1;
+    return true;
+  }
+
+  /**
+   * ¿Puede el coche entrar a boxes en la vuelta que está dando ahora? Sí mientras no haya pasado la
+   * entrada del pit lane. Devuelve la vuelta (1..N) o null.
+   */
+  pitThisLap(id: string, clock: number): number | null {
+    const car = this.car(id);
+    if (car.status !== "run" || this.laneAt(car, clock)) return null;
+    const lap = this.completedAt(car, clock).k + 1;
+    if (lap >= this.totalLaps || this.statusByLap[lap - 1] === "red" || lap === this.redLap) return null;
+    // Margen para que la decisión llegue antes del desvío al pit lane.
+    const entryAt = lap - this.pitLane.inFrac - 0.01;
+    return this.progressAt(car, clock) < entryAt ? lap : null;
+  }
+
+  /** Estado del modo de carrera para la interfaz: suspensión por bandera roja en curso. */
+  redFlagAt(clock: number) {
+    return this.redFlags.find((r) => clock >= r.from && clock < r.restart) ?? null;
+  }
   setAuto(id: string, auto: boolean) {
     const car = this.car(id);
     car.auto = auto;
@@ -324,6 +556,58 @@ export class RaceSim {
 
   private log(time: number, lap: number, type: RaceEventType, text: string, drivers: string[]) {
     this.events.push({ time, lap, type, text, drivers });
+  }
+
+  /**
+   * Mensaje de radio de un piloto del jugador. `cooldown` es el número de vueltas antes de que el
+   * mismo tipo de mensaje (`key`) pueda repetirse.
+   */
+  private radio(car: CarState, key: string, text: string, time: number, cooldown = 6) {
+    if (!car.isPlayer) return;
+    if ((car.radioCooldown[key] ?? 0) > this.lap) return;
+    car.radioCooldown[key] = this.lap + cooldown;
+    this.log(time, Math.max(1, this.lap), "radio", `${car.code}: «${text}»`, [car.driverId]);
+  }
+
+  /** Una de varias frases al azar (con el generador de la radio). */
+  private say(options: string[]) {
+    return options[Math.floor(this.radioRng() * options.length)];
+  }
+
+  /**
+   * Daños por contacto o salida de pista: alerón (reparable en boxes), fondo plano (permanente) o
+   * pinchazo. `severity` va de 0 (roce) a 1 (golpe fuerte). Devuelve el tiempo perdido en la vuelta.
+   */
+  private applyDamage(car: CarState, severity: number, time: number, L: number, cause: string): number {
+    const r = this.rng();
+    if (r < 0.55) {
+      const loss = range(this.rng, 0.3, 0.8) + severity * 0.9;
+      car.damage += loss;
+      this.log(time, L, "incident", `${car.code} daña el alerón delantero ${cause}`, [car.driverId]);
+      this.radio(
+        car,
+        "wing",
+        loss > 1
+          ? this.say(["¡Se ha roto el alerón! No puedo girar", "¡Alerón destrozado, necesito entrar!"])
+          : this.say(["Creo que el alerón está tocado", "El coche subvira mucho, revisad el alerón"]),
+        time + 4,
+        2,
+      );
+      if (loss > 1.2 && this.rng() < 0.35) this.triggerNeutralisation("vsc", time + 2);
+      return 0;
+    }
+    if (r < 0.85) {
+      const loss = range(this.rng, 0.15, 0.45) + severity * 0.4;
+      car.floorDamage += loss;
+      this.log(time, L, "incident", `${car.code} sufre daños en el fondo ${cause}`, [car.driverId]);
+      this.radio(car, "floor", this.say(["Noto el coche raro, creo que hay daños en el fondo", "He perdido carga atrás, el coche no va igual"]), time + 4, 3);
+      return 0;
+    }
+    this.log(time, L, "incident", `¡Pinchazo para ${car.code} ${cause}!`, [car.driverId]);
+    this.radio(car, "puncture", this.say(["¡Pinchazo! Entro a boxes", "¡Se ha reventado una rueda!"]), time + 3, 2);
+    car.wear = Math.max(car.wear, 90);
+    if (L < this.totalLaps && !car.pitRequest) car.pitRequest = isWetTyre(car.compound) ? car.compound : this.dryChoice(car, L);
+    return this.base * 0.25;
   }
 
   private needsOtherCompound(car: CarState) {
@@ -375,6 +659,8 @@ export class RaceSim {
       for (let k = 0; k < 8; k++) upcoming = Math.max(upcoming, rainAt(this.cfg.weather, (L + k) / this.totalLaps));
       if (upcoming < 0.08) return this.dryChoice(car, L);
     }
+    // Alerón muy dañado: se entra a cambiarlo aprovechando para poner neumáticos.
+    if (car.damage > 0.5 && remaining > 3) return onWet ? car.compound : this.dryChoice(car, L);
     if (onWet) return car.wear > 80 && remaining > 3 ? car.compound : null;
 
     const next = car.plan[0];
@@ -423,18 +709,21 @@ export class RaceSim {
 
   // ───────────────────────────── simulación ─────────────────────────────
 
-  private pitTime(car: CarState, status: LapStatus): number {
+  /**
+   * Tiempo de una parada: `drive` es lo que se pierde recorriendo el carril a velocidad limitada
+   * frente a ir por la pista y `stationary` el tiempo parado en el garaje.
+   */
+  private pitTime(car: CarState, status: LapStatus): { drive: number; stationary: number; slow: boolean } {
     const team = this.cfg.teams[car.teamId];
     const cfgS = SERIES_CFG[this.series];
     const lossFactor = status === "sc" ? 0.55 : status === "vsc" ? 0.65 : 1;
-    let stationary = cfgS.pitStationary + (100 - team.pitCrew) * 0.025 + Math.abs(gauss(this.rng)) * 0.25;
-    if (this.rng() < 0.03 + (100 - team.pitCrew) * 0.002) {
-      const extra = range(this.rng, 2, 7);
-      stationary += extra;
-      this.log(car.cum, this.lap, "pit", `Parada lenta para ${car.code}: ${stationary.toFixed(1)} s`, [car.driverId]);
-    }
+    // Azar propio de cada parada: pedir boxes a mitad de vuelta no altera el resto de la carrera.
+    const rng = this.localRng("pit", car.driverId, this.lap);
+    let stationary = cfgS.pitStationary + (100 - team.pitCrew) * 0.025 + Math.abs(gauss(rng)) * 0.25;
+    const slow = rng() < 0.03 + (100 - team.pitCrew) * 0.002;
+    if (slow) stationary += range(rng, 2, 7);
     if (car.damage > 0) stationary += 6;
-    return this.circuit.pitLoss * lossFactor + stationary;
+    return { drive: this.circuit.pitLoss * lossFactor, stationary, slow };
   }
 
   private retire(car: CarState, L: number, reason: string, lapTimeGuess: number, important = true) {
@@ -444,16 +733,136 @@ export class RaceSim {
     const part = range(this.rng, 0.15, 0.9);
     car.dnfTime = car.cum + lapTimeGuess * part;
     car.dnfProgress = L - 1 + part;
+    // Abandono en la vuelta de salida de boxes: se completa el paso por el carril antes de pararse.
+    const v = car.visits[car.visits.length - 1];
+    if (v && v.exit === undefined && v.lap === L - 1) {
+      this.closeVisit(car, lapTimeGuess);
+      car.pitCarry = 0;
+      const lane = this.laneAt(car, car.dnfTime);
+      if (lane) car.dnfProgress = lane.progress;
+      else car.dnfProgress = Math.min(L - 0.01, L - 1 + v.outFrac + Math.max(0, car.dnfTime - (v.exit ?? car.dnfTime)) / lapTimeGuess);
+    }
     if (important) this.log(car.dnfTime, L, "dnf", `${car.code} abandona: ${reason}`, [car.driverId]);
+    this.radio(car, "dnf", this.say(["Se acabó, lo siento chicos", "¡No! El coche se ha parado", "Fin de la carrera para nosotros…"]), car.dnfTime + 3, 999);
   }
 
-  private triggerNeutralisation(kind: "sc" | "vsc", time: number) {
-    if (this.pendingSc?.kind === "sc") return;
+  /** Neutralización pendiente para el final de la vuelta. Prioridad: bandera roja > SC > VSC. */
+  private triggerNeutralisation(kind: "sc" | "vsc" | "red", time: number) {
+    const rank = { vsc: 0, sc: 1, red: 2 };
+    if (this.pendingSc && rank[this.pendingSc.kind] >= rank[kind]) return;
     this.pendingSc = { kind, time };
+  }
+
+  /** Bandera roja con probabilidad `p` (como mucho una por carrera y nunca al final). */
+  private maybeRedFlag(p: number, time: number) {
+    if (this.redFlags.length > 0 || this.redLap > 0 || this.lap >= this.totalLaps - 3) return;
+    if (this.rng() < p) this.triggerNeutralisation("red", time);
+  }
+
+  /** En la reanudación tras bandera roja todos montan neumáticos nuevos y reparan el alerón sin perder tiempo. */
+  private freeTyreChange(order: CarState[], L: number) {
+    for (const car of order) {
+      let nc = car.pitRequest;
+      if (!nc) nc = car.auto ? (this.wet >= 0.82 ? "W" : this.wet >= 0.2 ? "I" : this.dryChoice(car, L)) : car.compound;
+      car.compound = nc;
+      car.wear = 0;
+      car.tyreAge = 0;
+      car.temp = SERIES_CFG[this.series].blanketTemp;
+      car.damage = 0;
+      car.pitRequest = null;
+      if (isWetTyre(nc)) car.usedWet = true;
+      else if (!car.usedDry.includes(nc)) car.usedDry.push(nc);
+      if (car.auto && !isWetTyre(nc)) car.plan = this.planFrom(this.cfg.drivers[car.driverId], L - 1, nc, this.needsOtherCompound(car), 0).stops;
+    }
+  }
+
+  /** Abre el paso por boxes de una vuelta que termina dentro del pit lane (en `line`). */
+  private openVisit(car: CarState, L: number, line: number, pit: { tin: number; tout: number; stationary: number }, racing: number): PitVisit {
+    const { inFrac, outFrac } = this.pitLane;
+    const box = this.pitLane.box.get(car.teamId) ?? 0;
+    const { tin, tout, stationary } = pit;
+    const entry = line - tin - racing * inFrac;
+    const v: PitVisit = { lap: L, entry, line, inFrac, outFrac, box, stationary, tout, stopStart: line, stopEnd: line + stationary };
+    if (box < 0) {
+      const drive = line - entry - stationary;
+      v.stopStart = entry + drive * ((box + inFrac) / inFrac);
+      v.stopEnd = v.stopStart + stationary;
+    }
+    car.visits.push(v);
+    return v;
+  }
+
+  /** Cierra el paso por boxes en la vuelta de salida, cuando ya se conoce su tiempo. */
+  private closeVisit(car: CarState, racing: number) {
+    const v = car.visits[car.visits.length - 1];
+    if (!v || v.exit !== undefined) return;
+    v.exit = v.line + v.tout + racing * v.outFrac;
+    if (v.box >= 0) {
+      const drive = v.exit - v.line - v.stationary;
+      v.stopStart = v.line + drive * (v.box / v.outFrac);
+      v.stopEnd = v.stopStart + v.stationary;
+    }
+  }
+
+  /** Mensajes de radio de los pilotos del jugador según cómo va su carrera. */
+  private radioChecks(car: CarState, idx: number, order: CarState[], time: number) {
+    const say = (o: string[]) => this.say(o);
+    const isW = isWetTyre(car.compound);
+    if (!car.pitRequest) {
+      if (car.wear > 85) this.radio(car, "wear2", say(["¡No me quedan neumáticos!", "Las gomas están muertas, tengo que entrar"]), time, 4);
+      else if (car.wear > 70) this.radio(car, "wear", say(["Los neumáticos se están acabando", "Estoy perdiendo agarre detrás", "Las ruedas ya no dan más de sí"]), time, 8);
+    }
+    const [lo, hi] = TEMP_WINDOW[car.compound];
+    if (car.temp < lo - 8 && car.tyreAge > 1) this.radio(car, "cold", say(["No consigo meter temperatura en las ruedas", "Los neumáticos están helados"]), time, 8);
+    if (car.temp > hi + 5) this.radio(car, "hot", say(["Los neumáticos se están sobrecalentando", "Las ruedas queman, tengo que aflojar"]), time, 8);
+    if (!isW && this.wet > 0.22) this.radio(car, "slicks", say(["¡Esto es una pista de patinaje con slicks!", "No hay agarre, ¡necesito intermedios!"]), time, 3);
+    if (isW && this.wet < 0.12) this.radio(car, "dry", say(["La pista se está secando, ¿ponemos slicks?", "Hay línea seca, creo que es hora de slicks"]), time, 5);
+    if (car.liftCoast) this.radio(car, "fuel", say(["Estoy levantando y rodando, perdemos mucho tiempo", "¿Cuánto combustible tengo que ahorrar todavía?"]), time, 10);
+    const ahead = order[idx - 1];
+    const behind = order[idx + 1];
+    if (ahead && car.cum - ahead.cum < 1.0 && car.style <= 1 && car.wear < 60) {
+      this.radio(car, "push", say([`Soy más rápido que ${ahead.code}, déjame atacar`, "Puedo ir más rápido, ¿ataco?"]), time, 8);
+    }
+    if (behind && behind.cum - car.cum < 0.5 && behind.teamId !== car.teamId) {
+      this.radio(car, "defend", say([`Tengo a ${behind.code} encima`, `${behind.code} me está apretando mucho`]), time, 7);
+    }
+  }
+
+  /** Intercambio de posiciones entre compañeros ordenado desde el muro. */
+  private applyTeamOrders(final: { car: CarState; t: number }[], L: number) {
+    for (const [teamId, ord] of this.teamOrders) {
+      if (ord !== "swap") continue;
+      for (let i = 1; i < final.length; i++) {
+        const front = final[i - 1];
+        const back = final[i];
+        if (front.car.teamId !== teamId || back.car.teamId !== teamId || back.t - front.t > 3) continue;
+        const d = this.cfg.drivers[front.car.driverId];
+        if (d.aggression > 78 && this.radioRng() < 0.4) {
+          const n = (this.orderRefusals.get(teamId) ?? 0) + 1;
+          this.orderRefusals.set(teamId, n);
+          this.radio(front.car, "refuse", this.say(["No pienso dejarle pasar, soy más rápido", "¿En serio? ¡Estoy en carrera!", "Que se gane la posición en pista"]), front.t - 20, 1);
+          if (n >= 3) {
+            this.teamOrders.set(teamId, "free");
+            this.log(front.t, L, "order", `${front.car.code} ignora la orden de equipo`, [front.car.driverId, back.car.driverId]);
+          }
+          break;
+        }
+        const tf = front.t;
+        front.t = Math.max(back.t, tf) + 0.35;
+        back.t = tf + 0.05;
+        this.log(tf - 15, L, "order", `🔁 ${front.car.code} deja pasar a ${back.car.code} por orden de equipo`, [front.car.driverId, back.car.driverId]);
+        this.radio(front.car, "obey", d.aggression > 65 ? this.say(["Vale… pero que conste en acta", "Entendido. No me gusta, pero entendido"]) : this.say(["Entendido, le dejo pasar", "Recibido, cedo la posición"]), tf - 25, 1);
+        this.radio(back.car, "thanks", this.say(["Gracias, a por ellos", "Recibido, gracias"]), tf + 5, 1);
+        this.teamOrders.set(teamId, "hold");
+        break;
+      }
+    }
+    final.sort((a, b) => a.t - b.t);
   }
 
   step(): void {
     if (this.done) return;
+    if (this.keepHistory) this.history[this.lap] = this.snapshot();
     const L = ++this.lap;
     const N = this.totalLaps;
     const rng = this.rng;
@@ -471,8 +880,14 @@ export class RaceSim {
 
     const order = this.orderAtLapStart();
     const leaderStart = order[0]?.cum ?? 0;
+    /** Salida parada: la de la carrera o la reanudación tras una bandera roja. */
+    const standing = L === 1 || L === this.restartLap;
+    if (L === this.restartLap) this.freeTyreChange(order, L);
 
-    if (this.rain > 0.05 && prevRain <= 0.05) this.log(leaderStart, L, "weather", "🌧️ Empieza a llover sobre el circuito", []);
+    if (this.rain > 0.05 && prevRain <= 0.05) {
+      this.log(leaderStart, L, "weather", "🌧️ Empieza a llover sobre el circuito", []);
+      for (const c of order) if (!isWetTyre(c.compound)) this.radio(c, "rain", this.say(["Empieza a llover en el sector dos", "Caen gotas, la pista empieza a resbalar"]), leaderStart + 8, 4);
+    }
     if (this.rain <= 0.05 && prevRain > 0.05) this.log(leaderStart, L, "weather", "🌤️ Deja de llover", []);
     if (this.wet >= 0.18 && prevWet < 0.18) this.log(leaderStart, L, "weather", "💧 La pista ya está mojada: hora de los intermedios", []);
     if (this.wet < 0.18 && prevWet >= 0.18) this.log(leaderStart, L, "weather", "☀️ Se forma una línea seca: los neumáticos de seco vuelven a ser opción", []);
@@ -480,7 +895,9 @@ export class RaceSim {
 
     // Estado de neutralización de esta vuelta.
     let status: LapStatus = "green";
-    if (this.sc.kind !== "none") {
+    if (L === this.redLap) {
+      status = "red";
+    } else if (this.sc.kind !== "none") {
       if (this.sc.lapsLeft > 0) {
         status = this.sc.kind;
         this.sc.lapsLeft--;
@@ -489,9 +906,9 @@ export class RaceSim {
         this.sc = { kind: "none", lapsLeft: 0 };
       }
     }
-    if (status !== "green") this.scLaps++;
+    if (status === "sc" || status === "vsc") this.scLaps++;
     this.statusByLap.push(status);
-    const restart = status === "green" && L > 1 && this.statusByLap[L - 2] !== "green";
+    const restart = status === "green" && L > 1 && !standing && this.statusByLap[L - 2] !== "green";
 
     // Decisiones.
     order.forEach((car, idx) => {
@@ -503,7 +920,12 @@ export class RaceSim {
     // Tiempos naturales.
     const nat = new Map<CarState, number>();
     const expected = new Map<CarState, number>();
-    const pitting = new Map<CarState, number>();
+    /** Coches que entran al pit lane al final de esta vuelta. */
+    const pitting = new Map<CarState, { tin: number; tout: number; stationary: number; slow: boolean }>();
+    /** Coches en su vuelta de salida de boxes (tiempo pendiente de la parada anterior). */
+    const outLap = new Map<CarState, number>();
+    /** Tiempo total en el carril de boxes durante esta vuelta. */
+    const laneTime = new Map<CarState, number>();
     const evolution = 0.4 * frac * (1 - this.wet);
     for (let idx = 0; idx < order.length; idx++) {
       const car = order[idx];
@@ -517,7 +939,7 @@ export class RaceSim {
       const forcedSave = margin < 0;
       const engine = forcedSave ? 0 : car.engine;
       car.liftCoast = margin < -remaining * 0.1;
-      let fuelUse = ENGINE_FUEL[engine] * (status === "sc" ? 0.5 : status === "vsc" ? 0.6 : 1);
+      let fuelUse = ENGINE_FUEL[engine] * (status === "sc" ? 0.5 : status === "vsc" ? 0.6 : status === "red" ? 0.4 : 1);
       if (car.liftCoast) fuelUse *= 0.82;
 
       let pct = basePct(this.series, team, d, this.cfg.pus, this.circuit, this.wet, car.setupQ);
@@ -529,16 +951,16 @@ export class RaceSim {
       pct += cfgS.fuelEffect * clamp(car.fuel / this.startFuel, 0, 1.1);
       pct += STYLE_PACE[car.style] + ENGINE_PACE[engine];
       if (this.hasErs) pct += car.ers === 2 && car.battery < 8 ? 0 : ERS_PACE[car.ers];
-      pct += car.damage + car.powerLoss;
+      pct += car.damage + car.floorDamage + car.powerLoss;
       if (car.liftCoast) pct += 1.2;
       pct -= evolution;
       expected.set(car, this.base * (1 + pct / 100));
       pct += gauss(rng) * (cfgS.raceNoise + (100 - d.consistency) * 0.008);
       let t = car.cum + this.base * (1 + pct / 100);
 
-      if (L === 1) {
+      if (standing) {
         t += car.startOffset;
-        if (!this.startUnderSc) t += this.base * 0.035 + gauss(rng) * (0.12 + (100 - d.start) * 0.01) + (this.wet > 0.3 ? gauss(rng) * 0.4 : 0);
+        if (!(L === 1 && this.startUnderSc)) t += this.base * 0.035 + gauss(rng) * (0.12 + (100 - d.start) * 0.01) + (this.wet > 0.3 ? gauss(rng) * 0.4 : 0);
       }
 
       // Neumáticos: desgaste y temperatura.
@@ -547,11 +969,13 @@ export class RaceSim {
       if (isW && this.wet < 0.3) target += (0.3 - this.wet) * 80;
       if (status === "sc") target -= 25;
       if (status === "vsc") target -= 18;
+      if (status === "red") target -= 30;
       car.temp += (target - car.temp) * 0.55;
-      let rate = sp.wear * this.circuit.wear * STYLE_WEAR[car.style] * (1 + (80 - d.tyre) * 0.008) * tempWearFactor(car.compound, car.temp);
+      let rate = sp.wear * this.circuit.wear * STYLE_WEAR[car.style] * (1 + (80 - d.tyre) * 0.008) * tempWearFactor(car.compound, car.temp) * (1 + car.floorDamage * 0.15);
       if (isW && this.wet < 0.25) rate *= 1 + (0.25 - this.wet) * 12;
       if (status === "sc") rate *= 0.25;
       if (status === "vsc") rate *= 0.4;
+      if (status === "red") rate *= 0.2;
       car.wear = Math.min(100, car.wear + rate);
       car.tyreAge++;
 
@@ -567,7 +991,7 @@ export class RaceSim {
       }
 
       // Incidentes (solo con bandera verde o VSC).
-      if (status !== "sc") {
+      if (status === "green" || status === "vsc") {
         const lapGuess = t - car.cum;
         const calm = status === "vsc" ? 0.3 : 1;
         const rel = reliabilityRating(team, this.cfg.pus);
@@ -583,6 +1007,7 @@ export class RaceSim {
           const loss = range(rng, 0.6, 1.8);
           car.powerLoss += loss;
           this.log(car.cum + lapGuess * 0.5, L, "incident", `${car.code} reporta un problema técnico y pierde ritmo`, [car.driverId]);
+          this.radio(car, "engine", this.say(["He perdido potencia, algo va mal en el motor", "El motor no tira, ¿qué veis en los datos?"]), car.cum + lapGuess * 0.55, 5);
         }
 
         const slickPen = isW ? 0 : wetPenalty(car.compound, this.wet);
@@ -590,17 +1015,21 @@ export class RaceSim {
         const errMult = STYLE_ERR[car.style] * (1 + (100 - d.consistency) / 30) * (1 + slickPen / 6) * (car.wear > 80 ? 1.6 : 1) * (1 + this.wet * 1.5) * cold;
         if (rng() < 0.004 * errMult * calm) {
           const r = rng();
+          const when = car.cum + lapGuess * 0.5;
           if (r < 0.04 * (1 + this.wet)) {
             this.retire(car, L, "Accidente", lapGuess);
             this.triggerNeutralisation(rng() < (this.circuit.street ? 0.75 : 0.5) + this.circuit.sc * 0.2 ? "sc" : "vsc", car.dnfTime ?? car.cum);
+            this.maybeRedFlag(0.1 + this.wet * 0.3 + (this.circuit.street ? 0.1 : 0), car.dnfTime ?? car.cum);
             continue;
           } else if (r < 0.22) {
             t += range(rng, 6, 16);
             car.wear = Math.min(100, car.wear + 6);
-            this.log(car.cum + lapGuess * 0.5, L, "incident", `Trompo de ${car.code}`, [car.driverId]);
+            this.log(when, L, "incident", `Trompo de ${car.code}`, [car.driverId]);
+            this.radio(car, "spin", this.say(["¡Trompo! Sigo en pista", "Lo siento, se me ha ido la trasera"]), when + 4, 3);
+            if (rng() < 0.3) t += this.applyDamage(car, 0.2, when + 1, L, "en la salida de pista");
           } else {
             t += range(rng, 0.8, 3.5);
-            if (car.isPlayer) this.log(car.cum + lapGuess * 0.5, L, "incident", `${car.code} se pasa de frenada y pierde tiempo`, [car.driverId]);
+            if (car.isPlayer) this.log(when, L, "incident", `${car.code} se pasa de frenada y pierde tiempo`, [car.driverId]);
           }
         }
 
@@ -612,19 +1041,21 @@ export class RaceSim {
           }
           t += this.base * 0.3;
           this.log(car.cum + lapGuess * 0.6, L, "incident", `¡Pinchazo para ${car.code}! Vuelve a boxes muy lento`, [car.driverId]);
+          this.radio(car, "puncture", this.say(["¡Pinchazo! Entro a boxes", "¡Se ha reventado una rueda!"]), car.cum + lapGuess * 0.62, 2);
           if (L < N && !car.pitRequest) car.pitRequest = isW ? car.compound : this.dryChoice(car, L);
         }
 
-        if (L === 1 && !this.startUnderSc && idx > 2 && rng() < 0.03 + this.wet * 0.03) {
+        if (standing && !(L === 1 && this.startUnderSc) && idx > 2 && rng() < 0.03 + this.wet * 0.03) {
           const r = rng();
           if (r < 0.1) {
             this.retire(car, L, "Colisión en la salida", lapGuess);
             this.triggerNeutralisation("sc", car.dnfTime ?? car.cum);
+            this.maybeRedFlag(0.25, car.dnfTime ?? car.cum);
             continue;
           }
           t += range(rng, 1, 5);
-          if (r < 0.4) car.damage += range(rng, 0.4, 1.2);
-          this.log(lapGuess * 0.2, L, "incident", `Toque en la salida: ${car.code} pierde posiciones${r < 0.4 ? " y daña el alerón" : ""}`, [car.driverId]);
+          this.log(car.cum + lapGuess * 0.2, L, "incident", `Toque en la salida: ${car.code} pierde posiciones`, [car.driverId]);
+          if (r < 0.4) t += this.applyDamage(car, 0.5, car.cum + lapGuess * 0.2 + 1, L, "en la salida");
         }
 
         if (status === "green" && rng() < 0.0012 * (car.style >= 3 ? 2 : 1)) {
@@ -642,44 +1073,63 @@ export class RaceSim {
         }
       }
 
-      if (car.pitRequest && L < N) {
-        const pt = this.pitTime(car, status);
-        pitting.set(car, pt);
-        t += pt;
-      } else {
-        car.pitRequest = L < N ? car.pitRequest : null;
+      if (car.isPlayer && status === "green" && L > 1) this.radioChecks(car, idx, order, car.cum + (t - car.cum) * 0.4);
+
+      // Boxes: la parada se reparte entre esta vuelta (hasta la meta) y la siguiente (hasta la salida).
+      // Con bandera roja no se entra: el cambio es gratuito en la reanudación.
+      let lane = 0;
+      if (car.pitRequest && L < N && status !== "red") {
+        const p = this.pitTime(car, status);
+        const box = this.pitLane.box.get(car.teamId) ?? 0;
+        const half = p.drive / 2;
+        const tin = half + (box < 0 ? p.stationary : 0);
+        pitting.set(car, { tin, tout: p.drive - half + (box >= 0 ? p.stationary : 0), stationary: p.stationary, slow: p.slow });
+        lane += tin;
+      } else if (L >= N) {
+        car.pitRequest = null;
       }
-      nat.set(car, t);
+      if (car.pitCarry > 0) {
+        lane += car.pitCarry;
+        outLap.set(car, car.pitCarry);
+        car.pitCarry = 0;
+      }
+      if (lane > 0) laneTime.set(car, lane);
+      nat.set(car, t + lane);
     }
 
     if (status === "green" && rng() < this.circuit.sc * 0.0008) {
       this.triggerNeutralisation(rng() < 0.5 ? "vsc" : "sc", leaderStart + this.base * 0.5);
       if (this.pendingSc) this.pendingSc.time = leaderStart + this.base * 0.5;
     }
-    if (status === "green" && this.wet > 0.92 && this.rain > 0.75 && rng() < 0.4) this.triggerNeutralisation("sc", leaderStart + this.base * 0.3);
+    if (status === "green" && this.wet > 0.92 && this.rain > 0.75 && rng() < 0.4) {
+      this.triggerNeutralisation("sc", leaderStart + this.base * 0.3);
+      if (this.wet > 0.96 && this.rain > 0.88) this.maybeRedFlag(0.5, leaderStart + this.base * 0.3);
+    }
 
     const alive = order.filter((c) => c.status === "run" && nat.has(c));
     let final: { car: CarState; t: number }[];
     const fights: { att: CarState; def: CarState }[] = [];
 
-    if (status === "sc") {
-      const scLap = this.base * 1.45;
-      const items = alive.map((car, i) => ({ car, i, earliest: car.cum + scLap * 0.72 + (pitting.get(car) ?? 0) }));
+    if (status === "sc" || status === "red") {
+      // Detrás del coche de seguridad (o rodando lento hacia la parrilla con bandera roja) no hay adelantamientos.
+      const scLap = this.base * (status === "red" ? 1.6 : 1.45);
+      const items = alive.map((car, i) => ({ car, i, earliest: car.cum + scLap * 0.72 + (laneTime.get(car) ?? 0) }));
       items.sort((a, b) => a.earliest - b.earliest || a.i - b.i);
       final = [];
       let prev = -Infinity;
       items.forEach((it, i) => {
         let t = Math.max(it.earliest, prev + 0.6);
-        if (i === 0) t = Math.max(t, it.car.cum + scLap + (pitting.get(it.car) ?? 0));
+        if (i === 0) t = Math.max(t, it.car.cum + scLap + (laneTime.get(it.car) ?? 0));
         prev = t;
         final.push({ car: it.car, t });
       });
     } else if (status === "vsc") {
       const vscLap = this.base * 1.32;
-      final = alive.map((car) => ({ car, t: car.cum + vscLap + (pitting.get(car) ?? 0) + (L === 1 ? car.startOffset : 0) }));
+      final = alive.map((car) => ({ car, t: car.cum + vscLap + (laneTime.get(car) ?? 0) + (standing ? car.startOffset : 0) }));
       final.sort((a, b) => a.t - b.t);
     } else {
-      final = this.resolveGreenLap(alive, nat, expected, pitting, L, restart, fights);
+      final = this.resolveGreenLap(alive, nat, expected, new Set(laneTime.keys()), L, restart, standing, fights);
+      this.applyTeamOrders(final, L);
     }
 
     for (let i = 1; i < final.length; i++) {
@@ -687,11 +1137,17 @@ export class RaceSim {
     }
 
     final.forEach(({ car, t }, i) => {
-      const lapTime = t - car.cum;
+      const startT = car.cum;
+      const lapTime = t - startT;
       car.cum = t;
-      const pt = pitting.get(car) ?? 0;
+      const pit = pitting.get(car);
+      const carry = outLap.get(car) ?? 0;
+      const tin = pit?.tin ?? 0;
+      // Tiempo que habría hecho la vuelta entera por pista (sin el carril de boxes).
+      const racing = Math.max(this.base * 0.5, lapTime - tin - carry);
       const rec: LapRecord = {
         lap: L,
+        start: startT,
         time: lapTime,
         end: t,
         compound: car.compound,
@@ -700,9 +1156,10 @@ export class RaceSim {
         fuel: car.fuel,
         battery: car.battery,
         pos: i + 1,
-        pitTime: pt,
+        pitTime: tin + carry,
       };
-      if (pt === 0 && lapTime < car.bestLap) {
+      if (carry > 0) this.closeVisit(car, racing);
+      if (rec.pitTime === 0 && lapTime < car.bestLap) {
         car.bestLap = lapTime;
         car.bestLapNo = L;
         if (!this.fastest || lapTime < this.fastest.time) {
@@ -710,10 +1167,15 @@ export class RaceSim {
           if (L > 3) this.log(t, L, "fastest", `⏱️ Vuelta rápida de ${car.code}`, [car.driverId]);
         }
       }
-      if (pt > 0 && car.pitRequest) {
+      if (pit && car.pitRequest) {
         const nc = car.pitRequest;
+        const v = this.openVisit(car, L, t, pit, racing);
+        // La parte de la parada que cae en la vuelta de salida (el garaje puede estar pasada la meta).
+        car.pitCarry = pit.tout;
         rec.pitCompound = nc;
-        this.log(t - pt * 0.5, L, "pit", `${car.code} para en boxes → ${nc} (P${i + 1})`, [car.driverId]);
+        const stopAt = v.box < 0 ? v.stopStart : t + pit.tout * 0.5;
+        this.log(stopAt, L, "pit", `${car.code} para en boxes → ${nc} (P${i + 1}) · ${pit.stationary.toFixed(1)} s`, [car.driverId]);
+        if (pit.slow) this.log(stopAt + pit.stationary, L, "pit", `Parada lenta para ${car.code}: ${pit.stationary.toFixed(1)} s`, [car.driverId]);
         car.compound = nc;
         car.wear = 0;
         car.tyreAge = 0;
@@ -724,25 +1186,55 @@ export class RaceSim {
         else if (!car.usedDry.includes(nc)) car.usedDry.push(nc);
         car.pitRequest = null;
         if (car.auto && !isWetTyre(nc)) car.plan = car.plan.filter((s) => s.lap > L);
-        if (this.rng() < 0.004) {
+        if (this.localRng("release", car.driverId, L)() < 0.004) {
           car.penalty += 5;
-          this.log(t, L, "penalty", `${car.code}: 5 s de penalización por salida insegura de boxes`, [car.driverId]);
+          this.log(t + pit.tout, L, "penalty", `${car.code}: 5 s de penalización por salida insegura de boxes`, [car.driverId]);
         }
       }
       car.laps.push(rec);
     });
 
+    // Bandera roja: los coches quedan parados en parrilla en el orden de carrera hasta la salida parada.
+    if (status === "red" && final.length > 0) {
+      const from = Math.min(...final.map((f) => f.t));
+      const restartT = Math.max(...final.map((f) => f.t)) + RED_FLAG_PAUSE;
+      final.forEach(({ car }, i) => {
+        car.startOffset = i * GRID_GAP;
+        car.laps[car.laps.length - 1].parkOff = car.startOffset / this.base;
+        car.cum = restartT;
+      });
+      this.redFlags.push({ lap: L, from, restart: restartT });
+      this.restartLap = L + 1;
+      this.log(restartT, L, "restart", "🟢 Se reanuda la carrera con salida parada", []);
+    }
+
     for (const f of fights) {
       if (f.att.status !== "run") continue;
       const pos = final.findIndex((x) => x.car === f.att) + 1;
       const aRec = f.att.laps[f.att.laps.length - 1];
-      this.log(aRec.end - aRec.time * 0.4, L, "overtake", `${f.att.code} adelanta a ${f.def.code} por P${pos}`, [f.att.driverId, f.def.driverId]);
+      const when = aRec.end - aRec.time * 0.4;
+      this.log(when, L, "overtake", `${f.att.code} adelanta a ${f.def.code} por P${pos}`, [f.att.driverId, f.def.driverId]);
+      if (f.att.teamId !== f.def.teamId) {
+        this.radio(f.att, "pass", this.say(["¡Vamos! A por el siguiente", "¡Adelantado!", "¡Qué maniobra! ¡Vamos!"]), when + 3, 4);
+        this.radio(f.def, "passed", this.say([`Me ha pasado ${f.att.code}, no tengo ritmo`, `${f.att.code} me ha adelantado con mucha facilidad`]), when + 3, 5);
+      }
     }
 
-    if (this.pendingSc && this.sc.kind === "none" && L < N - 1) {
-      const kind = this.pendingSc.kind;
-      this.sc = { kind, lapsLeft: kind === "sc" ? 3 + Math.floor(rng() * 3) : 1 + Math.floor(rng() * 2) };
-      this.log(this.pendingSc.time + 2, L, kind, kind === "sc" ? "🟡 ¡COCHE DE SEGURIDAD en pista!" : "🟡 Coche de seguridad virtual (VSC)", []);
+    const pend = this.pendingSc;
+    if (pend && status !== "red" && L < N - 1) {
+      if (pend.kind === "red" && this.redFlags.length === 0 && this.redLap === 0 && L < N - 3) {
+        this.sc = { kind: "none", lapsLeft: 0 };
+        this.redLap = L + 1;
+        this.log(pend.time + 2, L, "red", "🟥 ¡BANDERA ROJA! Carrera suspendida: todos a parrilla", []);
+        for (const c of this.running()) this.radio(c, "red", this.say(["Bandera roja, vuelvo despacio a parrilla", "Bandera roja. ¿Qué neumáticos ponemos para la salida?"]), pend.time + 6, 99);
+      } else if (this.sc.kind === "none") {
+        const kind = pend.kind === "red" ? "sc" : pend.kind;
+        this.sc = { kind, lapsLeft: kind === "sc" ? 3 + Math.floor(rng() * 3) : 1 + Math.floor(rng() * 2) };
+        this.log(pend.time + 2, L, kind, kind === "sc" ? "🟡 ¡COCHE DE SEGURIDAD en pista!" : "🟡 Coche de seguridad virtual (VSC)", []);
+        for (const c of this.running()) {
+          if (c.wear > 35 && !c.pitRequest && N - L > 5) this.radio(c, "sc", this.say(["Safety car: ¿entramos a boxes?", "Es buen momento para parar, ¿no?"]), pend.time + 8, 10);
+        }
+      }
     }
     this.pendingSc = null;
 
@@ -753,12 +1245,13 @@ export class RaceSim {
     alive: CarState[],
     nat: Map<CarState, number>,
     expected: Map<CarState, number>,
-    pitting: Map<CarState, number>,
+    /** Coches que pasan por el carril de boxes en esta vuelta: no luchan por la posición. */
+    inLane: Set<CarState>,
     L: number,
     restart: boolean,
+    standing: boolean,
     fights: { att: CarState; def: CarState }[],
   ) {
-    const rng = this.rng;
     const placed: { car: CarState; t: number }[] = [];
     const collisions: { att: CarState; def: CarState }[] = [];
     for (const car of alive) {
@@ -768,26 +1261,34 @@ export class RaceSim {
       let fought = 0;
       while (k > 0) {
         const ahead = placed[k - 1];
+        // Azar propio de cada duelo: recalcular una vuelta (al pedir boxes) no cambia los demás.
+        const rng = this.localRng("fight", L, car.driverId, ahead.car.driverId);
         if (t >= ahead.t + 0.2) break;
         const aheadLap = ahead.t - ahead.car.cum;
-        if (pitting.has(ahead.car) || aheadLap - lapT > 2.5) {
+        if (inLane.has(ahead.car) || aheadLap - lapT > 2.5) {
           k--;
           continue;
         }
-        if (pitting.has(car)) {
+        if (inLane.has(car)) {
           t = ahead.t + 0.2;
           break;
         }
-        if (fought >= (L === 1 ? 3 : 2)) {
+        // Orden de mantener posiciones (o intercambio pendiente): no se atacan entre compañeros.
+        const ord = car.teamId === ahead.car.teamId ? this.teamOrders.get(car.teamId) : undefined;
+        if (ord === "hold" || ord === "swap") {
+          t = ahead.t + range(rng, 0.3, 0.8);
+          break;
+        }
+        if (fought >= (standing ? 3 : 2)) {
           t = ahead.t + range(rng, 0.2, 0.5);
           break;
         }
         fought++;
         const startGap = car.cum - ahead.car.cum;
         const expAdv = (expected.get(ahead.car) ?? aheadLap) - (expected.get(car) ?? lapT);
-        const p = this.overtakeProb(car, ahead.car, expAdv, startGap, L, restart);
+        const p = this.overtakeProb(car, ahead.car, expAdv, startGap, L, restart, standing);
         const attD = this.cfg.drivers[car.driverId];
-        const pCol = 0.008 * (1 + (attD.aggression - 60) / 40) * (1 + this.wet) * (L === 1 ? 2 : 1);
+        const pCol = 0.008 * (1 + (attD.aggression - 60) / 40) * (1 + this.wet) * (standing ? 2 : 1);
         if (rng() < pCol) collisions.push({ att: car, def: ahead.car });
         if (rng() < p) {
           ahead.t += range(rng, 0.05, 0.35);
@@ -804,6 +1305,7 @@ export class RaceSim {
 
     for (const { att, def } of collisions) {
       if (att.status !== "run" || def.status !== "run") continue;
+      const rng = this.localRng("contact", L, att.driverId, def.driverId);
       const r = rng();
       const tAtt = placed.find((p) => p.car === att);
       const tDef = placed.find((p) => p.car === def);
@@ -814,6 +1316,7 @@ export class RaceSim {
         this.retire(victim, L, "Colisión", tAtt.t - att.cum, false);
         this.log(when, L, "dnf", `¡Contacto entre ${att.code} y ${def.code}! ${victim.code} abandona`, [att.driverId, def.driverId]);
         this.triggerNeutralisation(rng() < 0.6 ? "sc" : "vsc", when);
+        this.maybeRedFlag(0.08 + this.wet * 0.15, when);
         if (rng() < 0.5) {
           att.penalty += 10;
           this.log(when + 30, L, "penalty", `${att.code}: 10 s de penalización por provocar una colisión`, [att.driverId]);
@@ -821,9 +1324,9 @@ export class RaceSim {
       } else {
         tAtt.t += range(rng, 1, 4);
         tDef.t += range(rng, 1, 5);
-        if (r < 0.45) def.damage += range(rng, 0.3, 1.0);
-        if (r < 0.3) att.damage += range(rng, 0.3, 1.0);
         this.log(when, L, "incident", `Toque entre ${att.code} y ${def.code}`, [att.driverId, def.driverId]);
+        if (r < 0.45) tDef.t += this.applyDamage(def, 0.6, when + 1, L, `en el toque con ${att.code}`);
+        if (r < 0.3) tAtt.t += this.applyDamage(att, 0.5, when + 1, L, `en el toque con ${def.code}`);
         if (rng() < 0.35) {
           att.penalty += 5;
           this.log(when + 30, L, "penalty", `${att.code}: 5 s de penalización por provocar una colisión`, [att.driverId]);
@@ -850,7 +1353,7 @@ export class RaceSim {
    * Probabilidad de completar un adelantamiento. `paceAdv` es la ventaja de ritmo esperada (s/vuelta);
    * DRS, modo adelantamiento del ERS y estilo de conducción la aumentan, y cada circuito exige un mínimo.
    */
-  private overtakeProb(att: CarState, def: CarState, paceAdv: number, startGap: number, L: number, restart: boolean): number {
+  private overtakeProb(att: CarState, def: CarState, paceAdv: number, startGap: number, L: number, restart: boolean, standing: boolean): number {
     const ease = this.circuit.overtaking;
     const a = this.cfg.drivers[att.driverId];
     const d = this.cfg.drivers[def.driverId];
@@ -862,7 +1365,7 @@ export class RaceSim {
     }
     adv += (att.style - 2) * 0.06 - (def.style - 2) * 0.03;
     adv += (def.wear - att.wear) * 0.004;
-    if (L === 1) adv += 0.45;
+    if (standing) adv += 0.45;
     if (restart) adv += 0.15;
     if (this.wet > 0.3) adv += 0.15;
     const required = 0.3 + Math.pow(1 - ease, 1.3) * 1.5;
@@ -889,6 +1392,19 @@ export class RaceSim {
         c.flagLap = idx + 1;
         c.finishTime = c.laps[idx].end;
       }
+    }
+    for (const e of this.classification()) {
+      const c = this.car(e.driverId);
+      if (!c.isPlayer || e.status !== "FIN" || c.finishTime === undefined) continue;
+      const msg =
+        e.pos === 1
+          ? ["¡¡Síííí!! ¡Ganamos! ¡Increíble, chicos!", "¡VICTORIA! ¡Gracias a todo el equipo!"]
+          : e.pos <= 3
+            ? ["¡Podio! ¡Gran trabajo, equipo!", "¡Al podio! Buen trabajo, chicos"]
+            : e.pos <= 10
+              ? ["Puntos. Buen trabajo de todos", "Algo es algo: sumamos puntos"]
+              : ["No ha sido nuestro día", "Hoy no teníamos ritmo, a por la próxima"];
+      this.radio(c, "finish", this.say(msg), c.finishTime + 3, 999);
     }
   }
 
@@ -965,36 +1481,89 @@ export class RaceSim {
 
   // ───────────────────────────── visualización ─────────────────────────────
 
-  /** Vueltas recorridas (con fracción) por un coche en el instante `clock`. */
+  /**
+   * Vueltas recorridas (con fracción) por un coche en el instante `clock`. Por pista el coche va a
+   * ritmo de carrera; el tiempo de boxes solo se pierde dentro del carril, entre su entrada y su salida.
+   */
   progressAt(car: CarState, clock: number): number {
     if (car.status === "dnf" && car.dnfTime !== undefined && clock >= car.dnfTime) return car.dnfProgress ?? 0;
     if (car.finishTime !== undefined && clock >= car.finishTime) return car.flagLap ?? this.totalLaps;
+    const lane = this.laneAt(car, clock);
+    if (lane) return lane.progress;
     const laps = car.laps;
-    if (laps.length === 0) return -car.startOffset / this.base;
+    const gridOff = ((car.grid - 1) * GRID_GAP) / this.base;
+    const lastEnd = laps.length ? laps[laps.length - 1].end : 0;
+    if (clock >= lastEnd && car.status === "dnf" && car.dnfTime !== undefined && car.dnfProgress !== undefined) {
+      // Vuelta en la que abandona: avanza hasta el punto donde se para.
+      let s0 = laps.length ? laps.length - (laps[laps.length - 1].parkOff ?? 0) : -gridOff;
+      let t0 = laps.length ? Math.max(lastEnd, car.cum) : 0;
+      const out = car.visits.find((v) => v.lap === laps.length && v.exit !== undefined);
+      if (out?.exit !== undefined) {
+        s0 = laps.length + out.outFrac;
+        t0 = out.exit;
+      }
+      if (clock < t0 || car.dnfTime <= t0) return s0;
+      return s0 + ((clock - t0) / (car.dnfTime - t0)) * Math.max(0, car.dnfProgress - s0);
+    }
+    if (laps.length === 0) return -gridOff;
     let lo = 0;
     let hi = laps.length - 1;
-    if (clock >= laps[hi].end) return laps.length;
+    // Vuelta ya calculada por completo: el coche espera (p. ej. parado en parrilla) a que se calcule la siguiente.
+    if (clock >= laps[hi].end) return laps.length - (laps[hi].parkOff ?? 0);
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
       if (laps[mid].end <= clock) lo = mid + 1;
       else hi = mid;
     }
-    if (lo === 0) {
-      const off = car.startOffset / this.base;
-      return -off + (Math.max(0, clock) / laps[0].end) * (1 + off);
+    const rec = laps[lo];
+    const prev = lo > 0 ? laps[lo - 1] : undefined;
+    let s0 = lo - (prev ? prev.parkOff ?? 0 : gridOff);
+    let t0 = Math.max(0, rec.start);
+    if (clock < t0) return s0;
+    let s1 = lo + 1 - (rec.parkOff ?? 0);
+    let t1 = rec.end;
+    // Tramos de esta vuelta dentro del carril de boxes: salida al principio, entrada al final.
+    const out = car.visits.find((v) => v.lap === lo && v.exit !== undefined);
+    if (out?.exit !== undefined) {
+      s0 = lo + out.outFrac;
+      t0 = out.exit;
     }
-    const start = laps[lo - 1].end;
-    return lo + (clock - start) / (laps[lo].end - start);
+    const enter = car.visits.find((v) => v.lap === lo + 1);
+    if (enter) {
+      s1 = lo + 1 - enter.inFrac;
+      t1 = enter.entry;
+    }
+    if (t1 <= t0) return s0;
+    return s0 + (clamp(clock, t0, t1) - t0) / (t1 - t0) * (s1 - s0);
+  }
+
+  /**
+   * Posición dentro del carril de boxes, o null si el coche no está en él. `boxed` indica que está
+   * parado en su garaje.
+   */
+  laneAt(car: CarState, clock: number): { progress: number; boxed: boolean } | null {
+    for (let i = car.visits.length - 1; i >= 0; i--) {
+      const v = car.visits[i];
+      if (clock < v.entry) continue;
+      const exit = v.exit ?? v.line + v.stationary + this.base * v.outFrac + 6;
+      if (clock > exit) return null;
+      const boxed = clock >= v.stopStart && clock <= v.stopEnd;
+      const path: [number, number][] =
+        clock <= v.line
+          ? v.box < 0
+            ? [[v.entry, -v.inFrac], [v.stopStart, v.box], [v.stopEnd, v.box], [v.line, 0]]
+            : [[v.entry, -v.inFrac], [v.line, 0]]
+          : v.box >= 0
+            ? [[v.line, 0], [v.stopStart, v.box], [v.stopEnd, v.box], [exit, v.outFrac]]
+            : [[v.line, 0], [exit, v.outFrac]];
+      return { progress: v.lap + interpolate(path, clock), boxed };
+    }
+    return null;
   }
 
   /** ¿Está el coche en el carril de boxes en el instante `clock`? */
   inPitAt(car: CarState, clock: number): boolean {
-    for (let i = car.laps.length - 1; i >= 0; i--) {
-      const r = car.laps[i];
-      if (r.end < clock) return false;
-      if (r.pitTime > 0 && clock >= r.end - r.pitTime && clock <= r.end) return true;
-    }
-    return false;
+    return this.laneAt(car, clock) !== null;
   }
 
   /** Vuelta del líder (1..N) en el instante `clock`. */
@@ -1074,14 +1643,16 @@ export class RaceSim {
     if (!rec) {
       return { lap: 1, compound: car.compound, wear: car.wear, temp: car.temp, fuel: car.fuel, battery: car.battery, tyreAge: 0 };
     }
-    const startWear = prev ? (prev.pitCompound ? 0 : prev.wear) : 0;
+    // Neumáticos nuevos tras una parada o tras la bandera roja (vuelta que acaba parado en parrilla).
+    const freshAfter = (r: LapRecord) => !!r.pitCompound || r.parkOff !== undefined;
+    const startWear = prev ? (freshAfter(prev) ? 0 : prev.wear) : 0;
     const startFuel = prev ? prev.fuel : this.startFuel;
     const startBat = prev ? prev.battery : 60;
-    const startTemp = prev ? (prev.pitCompound ? SERIES_CFG[this.series].blanketTemp : prev.temp) : SERIES_CFG[this.series].blanketTemp;
+    const startTemp = prev ? (freshAfter(prev) ? SERIES_CFG[this.series].blanketTemp : prev.temp) : SERIES_CFG[this.series].blanketTemp;
     let age = 0;
     for (let i = idx; i >= 0; i--) {
       age++;
-      if (i > 0 && car.laps[i - 1].pitCompound) break;
+      if (i > 0 && freshAfter(car.laps[i - 1])) break;
     }
     return {
       lap: Math.min(this.totalLaps, idx + 1),

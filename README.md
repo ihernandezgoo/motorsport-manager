@@ -11,7 +11,11 @@ npm install
 npm run dev
 ```
 
-Abre <http://localhost:3000>. La partida se guarda automáticamente en el `localStorage` del navegador.
+Abre <http://localhost:3000>. Hay tres ranuras de partida de carrera (más la del fin de semana rápido) y se guardan automáticamente en el `localStorage` del navegador.
+
+### Partidas guardadas y migraciones
+
+Cada partida lleva un número de versión (`SAVE_VERSION` en `lib/game/season.ts`). Si cambias el formato de `GameState`, sube esa versión y añade el paso correspondiente en `lib/game/migrate.ts`: al abrir una partida antigua se aplican en orden las migraciones pendientes y se guarda antes una copia del original (`…-backup-v<versión>`). Las partidas de una versión más nueva o dañadas no se tocan: el menú las marca y solo se pueden borrar a mano.
 
 ## Qué incluye
 
@@ -58,7 +62,8 @@ Abre <http://localhost:3000>. La partida se guarda automáticamente en el `local
 | `lib/game/weather.ts`, `tyres.ts` | Modelos de clima y neumáticos |
 | `lib/game/qualifying.ts`, `setup.ts` | Clasificación y reglajes |
 | `lib/game/weekend.ts`, `season.ts`, `development.ts` | Fin de semana, temporada, puntos, finanzas y desarrollo |
-| `lib/store.ts`, `lib/liveRace.ts` | Estado de la partida (persistido) y controlador de la carrera en directo |
+| `lib/store.ts`, `lib/liveRace.ts` | Ranuras de partida (persistidas) y controlador de la carrera en directo |
+| `lib/game/migrate.ts` | Migraciones de partidas guardadas entre versiones |
 | `components/` | Interfaz (sede, fin de semana, carrera en directo, clasificaciones...) |
 
 El motor (`lib/game`) no depende de React, así que se puede usar para simular temporadas completas sin interfaz.

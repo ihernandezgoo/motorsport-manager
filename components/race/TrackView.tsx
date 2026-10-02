@@ -1,5 +1,5 @@
 import { memo, useEffect, useId, useRef, useState, type PointerEvent as RPointerEvent, type ReactNode, type WheelEvent as RWheelEvent } from "react";
-import { scenePointAt, trackScene } from "@/lib/game/geo";
+import { pitLaneOffset, scenePointAt, trackScene } from "@/lib/game/geo";
 import { hashString } from "@/lib/game/rng";
 import type { PathLayer } from "@/lib/game/sceneryGen";
 import { COMPOUND_INFO } from "@/lib/game/tyres";
@@ -327,7 +327,11 @@ export function TrackView({
   const visible = cars
     .map((c) => {
       const p = scenePointAt(scene, c.progress);
-      const lateral = c.inPit ? 0 : ((hashString(c.id) % 5) - 2) * 1.5;
+      // En boxes el coche va por el carril (desplazado del eje de la pista) y se para frente a su garaje.
+      let frac = c.progress % 1;
+      if (frac < 0) frac += 1;
+      if (frac > 0.5) frac -= 1;
+      const lateral = c.inPit ? pitLaneOffset(scene, frac * scene.total, c.boxed) : ((hashString(c.id) % 5) - 2) * 1.5;
       const a = (p.angle * Math.PI) / 180;
       const [x, y] = toScreen(p.x - Math.sin(a) * lateral, p.y + Math.cos(a) * lateral);
       return { c, x, y, angle: p.angle };

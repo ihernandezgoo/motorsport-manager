@@ -7,6 +7,7 @@ import {
   CloudRain,
   Droplets,
   Flag,
+  Headset,
   Info,
   Map as MapIcon,
   Menu,
@@ -20,13 +21,14 @@ import {
   Timer,
   TriangleAlert,
   Undo2,
+  Users,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { CIRCUITS } from "@/lib/game/data/circuits";
 import { formatLap } from "@/lib/game/perf";
-import type { RaceEvent } from "@/lib/game/race";
+import type { RaceEvent, TeamOrder } from "@/lib/game/race";
 import { describePlan, tyreLife } from "@/lib/game/strategy";
 import { COMPOUND_INFO, dryCompounds, idealForWetness } from "@/lib/game/tyres";
 import type { GameState } from "@/lib/game/types";
@@ -60,7 +62,16 @@ const EVENT_ICONS: Record<RaceEvent["type"], { Icon: LucideIcon; color: string }
   penalty: { Icon: Scale, color: "#fca5a5" },
   fastest: { Icon: Timer, color: "#c084fc" },
   info: { Icon: Info, color: "#cbd5e1" },
+  red: { Icon: Flag, color: "#ef4444" },
+  radio: { Icon: Headset, color: "#67e8f9" },
+  order: { Icon: Users, color: "#c4b5fd" },
 };
+
+const ORDERS: { id: TeamOrder; label: string; title: string }[] = [
+  { id: "free", label: "Libre", title: "Los pilotos pueden luchar entre ellos" },
+  { id: "hold", label: "Mantener", title: "Nadie ataca a su compañero" },
+  { id: "swap", label: "Intercambiar", title: "El de delante deja pasar a su compañero si está a menos de 3 s" },
+];
 
 function EventIcon({ type }: { type: RaceEvent["type"] }) {
   const { Icon, color } = EVENT_ICONS[type];
@@ -131,7 +142,8 @@ export function RaceHud({
   const follow = (id: string) => setCamera({ kind: "follow", id });
   const speedIdx = Math.max(0, SPEEDS.indexOf(snap.speed));
   const window5 = 5 * Math.max(1, snap.speed);
-  const toasts = snap.events.filter((e) => e.type !== "fastest" && e.time >= snap.clock - window5).slice(0, 2);
+  // La radio de los pilotos se ve en su propio panel; aquí solo los avisos de carrera.
+  const toasts = snap.events.filter((e) => e.type !== "fastest" && e.type !== "radio" && e.time >= snap.clock - window5).slice(0, 2);
   const forecastMax = Math.max(...snap.radar);
   const forecastIcon = describeWeather(forecastMax, Math.max(0.2, forecastMax * 1.5));
   const nowIcon = describeWeather(snap.rain, Math.max(0.2, snap.rain * 1.5));
@@ -225,7 +237,17 @@ export function RaceHud({
             </button>
           </div>
         )}
-        {snap.status !== "green" && !snap.finished && (
+        {snap.status === "red" && !snap.finished && (
+          <div className="flex flex-col items-center gap-1">
+            <span className="rounded bg-[#dc2626] px-5 py-1 text-sm font-black tracking-[0.3em] text-white shadow-lg ring-2 ring-white/70">BANDERA ROJA</span>
+            {snap.redFlag && (
+              <span className="rounded bg-black/80 px-3 py-1 text-xs font-semibold text-white">
+                Carrera suspendida · salida parada en {Math.max(0, Math.ceil(snap.redFlag.restartIn))} s · cambio de neumáticos gratis con el botón PIT
+              </span>
+            )}
+          </div>
+        )}
+        {(snap.status === "sc" || snap.status === "vsc") && !snap.finished && (
           <div className="sc-stripes rounded px-1 py-1 shadow-lg">
             <span className="rounded bg-[#facc15] px-3 py-0.5 text-sm font-black tracking-[0.25em] text-black">{snap.status === "sc" ? "SAFETY CAR" : "VIRTUAL SAFETY CAR"}</span>
           </div>
@@ -343,6 +365,24 @@ export function RaceHud({
             <div className="mb-2 rounded-lg bg-[#16a34a] px-3 py-1.5 text-center text-sm font-bold shadow-lg">Coches en parrilla · pulsa ▶ para dar la salida</div>
           )}
           <div className="overflow-hidden rounded-xl border border-white/10 bg-[#15181e]/90 backdrop-blur">
+            {snap.players.length > 1 && !snap.finished && (
+              <div className="grid grid-cols-[auto_1fr_1fr_1fr] items-stretch border-b border-white/10 text-[10px] font-bold uppercase tracking-wider">
+                <span className="flex items-center gap-1 px-2 text-white/50" title="Órdenes de equipo">
+                  <Users className="h-3.5 w-3.5" />
+                </span>
+                {ORDERS.map((o) => (
+                  <button
+                    type="button"
+                    key={o.id}
+                    title={o.title}
+                    onClick={() => liveRace.setTeamOrder(o.id)}
+                    className={cx("py-1.5 transition-colors", snap.teamOrder === o.id ? "bg-white text-black" : "text-white/70 hover:bg-white/10 hover:text-white")}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="flex items-center justify-center gap-3 px-3 py-2">
               <StatusDots green={snap.status === "green"} />
               <span className="text-sm font-black uppercase tracking-wider">{KIND_TITLE[snap.kind]}</span>
@@ -506,7 +546,7 @@ function DataCentre({ snap, state, onClose }: { snap: LiveSnapshot; state: GameS
   const [mine, setMine] = useState(false);
   const circuit = CIRCUITS[snap.circuitId];
   const playerIds = snap.players.map((p) => p.id);
-  const events = snap.events.filter((e) => !mine || e.drivers.some((d) => playerIds.includes(d)) || ["sc", "vsc", "restart", "weather"].includes(e.type));
+  const events = snap.events.filter((e) => !mine || e.drivers.some((d) => playerIds.includes(d)) || ["sc", "vsc", "red", "restart", "weather"].includes(e.type));
   const ideal = idealForWetness(snap.wet);
   const dry = dryCompounds(snap.series, circuit);
   const tabs = [

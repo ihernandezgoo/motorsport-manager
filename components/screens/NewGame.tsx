@@ -17,7 +17,7 @@ function objective(rank: number, total: number) {
   return { label: "Crecer desde abajo", color: "#ef4444" };
 }
 
-export function NewGame({ onCancel, onCreate }: { onCancel: () => void; onCreate: (s: GameState) => void }) {
+export function NewGame({ slot, onCancel, onCreate }: { slot: number; onCancel: () => void; onCreate: (s: GameState) => void }) {
   const [series, setSeries] = useState<SeriesId | null>(null);
   const [teamId, setTeamId] = useState<string | null>(null);
   const [manager, setManager] = useState("Director");
@@ -34,6 +34,7 @@ export function NewGame({ onCancel, onCreate }: { onCancel: () => void; onCreate
         <button type="button" onClick={onCancel} className="mb-6 self-start text-sm text-muted hover:text-fg">
           ← Volver
         </button>
+        <div className="text-[11px] font-black uppercase tracking-[0.2em] text-dim">Nueva partida · Ranura {slot}</div>
         <h1 className="text-3xl font-black">Elige tu categoría</h1>
         <p className="mt-1 text-sm text-muted">Las otras dos categorías se simularán en paralelo durante toda la temporada.</p>
         <div className="mt-8 grid gap-4 md:grid-cols-3">
@@ -80,7 +81,9 @@ export function NewGame({ onCancel, onCreate }: { onCancel: () => void; onCreate
           </button>
           <div className="flex items-center gap-2">
             <SeriesBadge s={series} />
-            <span className="text-sm text-muted">{SERIES_NAMES[series]} 2026</span>
+            <span className="text-sm text-muted">
+              {SERIES_NAMES[series]} 2026 · Ranura {slot}
+            </span>
           </div>
           <h1 className="mt-1 text-3xl font-black">Elige tu equipo</h1>
         </div>
