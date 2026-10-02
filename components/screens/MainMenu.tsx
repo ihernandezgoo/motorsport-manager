@@ -20,7 +20,7 @@ export function MainMenu({
   onResumeQuick: () => void;
 }) {
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden px-4">
+    <div className="relative flex h-dvh items-center justify-center overflow-hidden px-4">
       <div className="pointer-events-none absolute inset-0 opacity-[0.12]">
         <TrackMap circuitId="monza" className="absolute -right-40 -top-24 h-[900px] w-[900px]" />
         <TrackMap circuitId="suzuka" className="absolute -bottom-52 -left-48 h-[760px] w-[760px]" />

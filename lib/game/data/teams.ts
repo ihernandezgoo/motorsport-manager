@@ -61,24 +61,25 @@ export const F1_TEAMS = teams("f1", 0, [
 
 export const F2_TEAMS = teams("f2", 85, [
   ["f2_invicta", "Invicta Racing", "Invicta", "#C6FF00", "#1b1b1b", "GBR", 88, 88, 86, 84, 88, 84, 2.6, 0.42],
-  ["f2_hitech", "Hitech", "Hitech", "#9CA3AF", "#E11D48", "GBR", 82, 82, 84, 82, 82, 82, 2.4, 0.38],
-  ["f2_campos", "Campos Racing", "Campos", "#FF7A00", "#1E3A8A", "ESP", 89, 88, 86, 86, 89, 84, 2.6, 0.42],
-  ["f2_dams", "DAMS Lucas Oil", "DAMS", "#1D4ED8", "#FACC15", "FRA", 85, 85, 84, 82, 85, 82, 2.4, 0.38],
-  ["f2_mp", "MP Motorsport", "MP", "#F43F5E", "#FFFFFF", "NED", 86, 86, 85, 84, 86, 84, 2.5, 0.4],
+  ["f2_hitech", "Hitech", "Hitech", "#4E6072", "#8B9DAE", "GBR", 82, 82, 84, 82, 82, 82, 2.4, 0.38],
+  ["f2_campos", "Campos Racing", "Campos", "#313131", "#6B6B6B", "ESP", 89, 88, 86, 86, 89, 84, 2.6, 0.42],
+  ["f2_dams", "DAMS Lucas Oil", "DAMS", "#1D4ED8", "#00A0E3", "FRA", 85, 85, 84, 82, 85, 82, 2.4, 0.38],
+  ["f2_mp", "MP Motorsport", "MP", "#9B4000", "#F48B3E", "NED", 86, 86, 85, 84, 86, 84, 2.5, 0.4],
   ["f2_prema", "PREMA Racing", "PREMA", "#DC2626", "#FFFFFF", "ITA", 80, 81, 84, 84, 80, 84, 2.5, 0.4],
   ["f2_rodin", "Rodin Motorsport", "Rodin", "#D4A017", "#0b0b0b", "NZL", 88, 87, 85, 84, 88, 82, 2.5, 0.4],
-  ["f2_art", "ART Grand Prix", "ART", "#F5F5F5", "#DC2626", "FRA", 85, 85, 85, 84, 85, 84, 2.5, 0.4],
+  ["f2_art", "ART Grand Prix", "ART", "#2D0000", "#DC2626", "FRA", 85, 85, 85, 84, 85, 84, 2.5, 0.4],
   ["f2_aix", "AIX Racing", "AIX", "#7C3AED", "#FFFFFF", "UAE", 78, 78, 82, 78, 78, 78, 2.2, 0.34],
-  ["f2_var", "Van Amersfoort Racing", "VAR", "#0EA5E9", "#F97316", "NED", 80, 80, 83, 80, 80, 80, 2.2, 0.34],
+  ["f2_var", "Van Amersfoort Racing", "VAR", "#b33900", "#B33900", "NED", 80, 80, 83, 80, 80, 80, 2.2, 0.34],
   ["f2_trident", "Trident", "Trident", "#60A5FA", "#0B1F4D", "ITA", 83, 83, 84, 82, 83, 82, 2.3, 0.36],
 ]);
 
 export const F3_TEAMS = teams("f3", 85, [
+  ["f3_invicta", "Invicta Racing", "Invicta", "#C6FF00", "#1b1b1b", "GBR", 88, 88, 86, 84, 88, 84, 1.3, 0.2],
   ["f3_campos", "Campos Racing", "Campos", "#FF7A00", "#1E3A8A", "ESP", 88, 88, 86, 84, 88, 84, 1.3, 0.2],
   ["f3_trident", "Trident", "Trident", "#60A5FA", "#0B1F4D", "ITA", 85, 86, 85, 84, 86, 82, 1.2, 0.19],
   ["f3_mp", "MP Motorsport", "MP", "#F43F5E", "#FFFFFF", "NED", 85, 85, 85, 84, 85, 84, 1.2, 0.19],
   ["f3_art", "ART Grand Prix", "ART", "#F5F5F5", "#DC2626", "FRA", 84, 84, 85, 84, 84, 84, 1.2, 0.19],
-  ["f3_var", "Van Amersfoort Racing", "VAR", "#0EA5E9", "#F97316", "NED", 83, 83, 84, 80, 83, 80, 1.1, 0.17],
+  ["f3_var", "Van Amersfoort Racing", "VAR", "#b33900", "#B33900", "NED", 83, 83, 84, 80, 83, 80, 1.1, 0.17],
   ["f3_rodin", "Rodin Motorsport", "Rodin", "#D4A017", "#0b0b0b", "NZL", 83, 83, 84, 82, 83, 82, 1.1, 0.17],
   ["f3_prema", "PREMA Racing", "PREMA", "#DC2626", "#FFFFFF", "ITA", 80, 80, 84, 84, 80, 84, 1.2, 0.19],
   ["f3_hitech", "Hitech", "Hitech", "#9CA3AF", "#E11D48", "GBR", 79, 79, 84, 82, 79, 82, 1.1, 0.17],
@@ -222,7 +223,7 @@ export const SERIES_NAMES: Record<SeriesId, string> = {
 export const SERIES_SHORT: Record<SeriesId, string> = { f1: "F1", f2: "F2", f3: "F3" };
 
 export const SERIES_COLOR: Record<SeriesId, string> = {
-  f1: "#e10600",
-  f2: "#0090d0",
-  f3: "#7e57c2",
+  f1: "#E10600",
+  f2: "#009CDE",
+  f3: "#E35205",
 };

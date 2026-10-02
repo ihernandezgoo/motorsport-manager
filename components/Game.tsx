@@ -36,7 +36,7 @@ export default function Game() {
   }, []);
 
   if (!hydrated) {
-    return <div className="grid min-h-screen place-items-center text-sm text-muted">Cargando…</div>;
+    return <div className="grid h-dvh place-items-center text-sm text-muted">Cargando…</div>;
   }
 
   const startQuick = (cfg: QuickConfig) => {
@@ -141,8 +141,8 @@ function QuickWeekend({ state, onExit, onRepeat }: { state: GameState; onExit: (
   const team = state.teams[state.player.teamId];
   if (!ws) return null;
   return (
-    <div className="min-h-screen">
-      <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-bg/90 px-4 py-2.5 backdrop-blur lg:px-6">
+    <div className="flex h-dvh flex-col overflow-hidden">
+      <header className="z-30 flex shrink-0 items-center gap-3 border-b border-line bg-bg/90 px-4 py-2.5 backdrop-blur lg:px-6">
         <div className="text-lg font-black italic tracking-tight">
           APEX<span className="text-accent">/</span>RACE
         </div>
@@ -162,7 +162,7 @@ function QuickWeekend({ state, onExit, onRepeat }: { state: GameState; onExit: (
           Salir al menú
         </Btn>
       </header>
-      <main className="p-4 lg:p-6">
+      <main className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 lg:px-6 lg:py-4">
         <WeekendView
           state={state}
           ws={ws}

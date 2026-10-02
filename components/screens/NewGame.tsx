@@ -6,7 +6,7 @@ import { carScore, driverOverall, formatMoney } from "@/lib/game/perf";
 import { newGame } from "@/lib/game/season";
 import type { GameState, SeriesId } from "@/lib/game/types";
 import { DriverPortrait, TeamCar } from "../art/Photos";
-import { Btn, cx, Nat, SeriesBadge } from "../ui";
+import { Btn, cx, Nat, PagedGrid, SeriesBadge, SeriesLogo } from "../ui";
 
 const PUS = Object.fromEntries(POWER_UNITS.map((p) => [p.id, p]));
 
@@ -30,8 +30,8 @@ export function NewGame({ onCancel, onCreate }: { onCancel: () => void; onCreate
 
   if (!series) {
     return (
-      <div className="mx-auto w-full max-w-5xl px-4 py-10">
-        <button type="button" onClick={onCancel} className="mb-6 text-sm text-muted hover:text-fg">
+      <div className="mx-auto flex h-dvh w-full max-w-5xl flex-col justify-center overflow-hidden px-4 py-6">
+        <button type="button" onClick={onCancel} className="mb-6 self-start text-sm text-muted hover:text-fg">
           ← Volver
         </button>
         <h1 className="text-3xl font-black">Elige tu categoría</h1>
@@ -45,8 +45,8 @@ export function NewGame({ onCancel, onCreate }: { onCancel: () => void; onCreate
               className="group relative overflow-hidden rounded-2xl border border-line bg-panel p-6 text-left transition hover:border-line-2 hover:bg-panel-2"
             >
               <div className="absolute inset-x-0 top-0 h-1" style={{ background: SERIES_COLOR[s.id] }} />
-              <div className="text-5xl font-black italic" style={{ color: SERIES_COLOR[s.id] }}>
-                {s.id.toUpperCase()}
+              <div className="flex h-12 items-center">
+                <SeriesLogo s={s.id} className="h-full" textClass="text-5xl" />
               </div>
               <div className="mt-2 text-lg font-bold">{SERIES_NAMES[s.id]}</div>
               <p className="mt-2 text-sm leading-relaxed text-muted">{s.desc}</p>
@@ -65,19 +65,19 @@ export function NewGame({ onCancel, onCreate }: { onCancel: () => void; onCreate
   const selected = teams.find((x) => x.t.id === teamId);
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-10">
-      <button
-        type="button"
-        onClick={() => {
-          setSeries(null);
-          setTeamId(null);
-        }}
-        className="mb-6 text-sm text-muted hover:text-fg"
-      >
-        ← Cambiar categoría
-      </button>
-      <div className="flex flex-wrap items-end justify-between gap-4">
+    <div className="mx-auto flex h-dvh w-full max-w-7xl flex-col overflow-hidden px-4 pt-5">
+      <div className="flex shrink-0 flex-wrap items-end justify-between gap-4">
         <div>
+          <button
+            type="button"
+            onClick={() => {
+              setSeries(null);
+              setTeamId(null);
+            }}
+            className="mb-2 text-sm text-muted hover:text-fg"
+          >
+            ← Cambiar categoría
+          </button>
           <div className="flex items-center gap-2">
             <SeriesBadge s={series} />
             <span className="text-sm text-muted">{SERIES_NAMES[series]} 2026</span>
@@ -94,56 +94,59 @@ export function NewGame({ onCancel, onCreate }: { onCancel: () => void; onCreate
           />
         </label>
       </div>
-      <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {teams.map(({ t, score }, rank) => {
+      <PagedGrid
+        className="mt-3"
+        items={teams}
+        minW={320}
+        minH={series === "f3" ? 250 : 220}
+        keyOf={(x) => x.t.id}
+        header={<span className="text-xs text-muted">Ordenados por rendimiento del coche</span>}
+        render={({ t, score }, rank) => {
           const drivers = ALL_DRIVERS.filter((d) => d.teamId === t.id).sort((a, b) => a.number - b.number);
           const obj = objective(rank, teams.length);
           return (
             <button
               type="button"
-              key={t.id}
               onClick={() => setTeamId(t.id)}
               className={cx(
-                "flex gap-3 rounded-xl border p-4 text-left transition hover:brightness-110",
+                "flex h-full w-full flex-col overflow-hidden rounded-xl border p-3 text-left transition hover:brightness-110",
                 teamId === t.id ? "border-accent ring-1 ring-accent" : "border-line",
               )}
               style={{ background: `linear-gradient(135deg, ${t.color}55 0%, #0e1218 55%)` }}
             >
-              <div className="min-w-0 flex-1">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="truncate font-bold">{t.name}</div>
-                    <div className="text-xs text-muted">{t.pu ? `Motor ${pus[t.pu].name}` : "Dallara · Mecachrome (monomarca)"}</div>
+              <div className="flex shrink-0 items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate font-bold">{t.name}</div>
+                  <div className="truncate text-xs text-muted">{t.pu ? `Motor ${pus[t.pu].name}` : "Dallara · Mecachrome (monomarca)"}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-2xl font-black leading-none tabular">{score.toFixed(0)}</div>
+                  <div className="text-[10px] uppercase tracking-wider text-dim">Coche</div>
+                </div>
+              </div>
+              <TeamCar team={t} series={series} number={drivers[0]?.number} helmet={drivers[0] ? helmetOf(drivers[0]).base : undefined} className="my-1 min-h-0 w-full flex-1" />
+              <div className="shrink-0 space-y-1">
+                {drivers.map((d) => (
+                  <div key={d.id} className="flex items-center gap-2 text-sm">
+                    <DriverPortrait driver={d} color={t.color} className="h-7 w-7" rounded="rounded-full" />
+                    <span className="w-6 text-right font-mono text-xs text-muted">{d.number}</span>
+                    <span className="truncate">
+                      {d.first} <b>{d.last}</b>
+                    </span>
+                    <Nat code={d.nat} />
+                    <span className="ml-auto text-xs tabular text-muted">{driverOverall(d)}</span>
                   </div>
-                  <div className="text-right">
-                    <div className="text-2xl font-black tabular">{score.toFixed(0)}</div>
-                    <div className="text-[10px] uppercase tracking-wider text-dim">Coche</div>
-                  </div>
-                </div>
-                <TeamCar team={t} series={series} number={drivers[0]?.number} helmet={drivers[0] ? helmetOf(drivers[0]).base : undefined} className="mt-2 h-20 w-full" />
-                <div className="mt-2 space-y-1">
-                  {drivers.map((d) => (
-                    <div key={d.id} className="flex items-center gap-2 text-sm">
-                      <DriverPortrait driver={d} color={t.color} className="h-8 w-8" rounded="rounded-full" />
-                      <span className="w-6 text-right font-mono text-xs text-muted">{d.number}</span>
-                      <span className="truncate">
-                        {d.first} <b>{d.last}</b>
-                      </span>
-                      <Nat code={d.nat} />
-                      <span className="ml-auto text-xs tabular text-muted">{driverOverall(d)}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-3 flex items-center justify-between text-xs">
-                  <span style={{ color: obj.color }}>● {obj.label}</span>
-                  <span className="text-muted">Presupuesto {formatMoney(t.budget)}</span>
-                </div>
+                ))}
+              </div>
+              <div className="mt-2 flex shrink-0 items-center justify-between gap-2 text-xs">
+                <span className="truncate" style={{ color: obj.color }}>● {obj.label}</span>
+                <span className="shrink-0 text-muted">Presupuesto {formatMoney(t.budget)}</span>
               </div>
             </button>
           );
-        })}
-      </div>
-      <div className="sticky bottom-0 mt-6 flex items-center justify-between gap-3 border-t border-line bg-bg/95 py-4 backdrop-blur">
+        }}
+      />
+      <div className="mt-3 flex shrink-0 items-center justify-between gap-3 border-t border-line py-3">
         <div className="text-sm text-muted">{selected ? <>Has elegido <b className="text-fg">{selected.t.name}</b></> : "Selecciona un equipo para empezar"}</div>
         <Btn
           variant="primary"

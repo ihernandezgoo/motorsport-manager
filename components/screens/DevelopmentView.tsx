@@ -3,10 +3,11 @@ import { AREA_LABELS, areaValue, availableAreas, buyFacility, COST_SCALE, FACILI
 import { formatMoney } from "@/lib/game/perf";
 import type { GameState } from "@/lib/game/types";
 import { gameStore } from "@/lib/store";
-import { Btn, cx, Meter, Panel } from "../ui";
+import { Btn, cx, Meter, Pager, Panel, Tabs, useRowPager } from "../ui";
 
 export function DevelopmentView({ state }: { state: GameState }) {
   const [msg, setMsg] = useState<string | null>(null);
+  const [tab, setTab] = useState<"factory" | "facilities">("factory");
   const team = state.teams[state.player.teamId];
   const series = team.series;
   const areas = availableAreas(state);
@@ -24,8 +25,19 @@ export function DevelopmentView({ state }: { state: GameState }) {
   const spend = state.finance.filter((f) => f.amount < 0).reduce((a, f) => a + f.amount, 0);
 
   return (
-    <div className="mx-auto max-w-7xl space-y-4">
-      <div className="grid gap-4 sm:grid-cols-3">
+    <div className="mx-auto flex h-full w-full max-w-7xl min-h-0 flex-col gap-3">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
+        <Tabs
+          value={tab}
+          onChange={setTab}
+          tabs={[
+            { id: "factory", label: "Proyectos" },
+            { id: "facilities", label: "Instalaciones y finanzas" },
+          ]}
+        />
+        {msg && <div className="rounded-lg border border-bad/40 bg-bad/10 px-4 py-1.5 text-sm text-bad">{msg}</div>}
+      </div>
+      <div className="grid shrink-0 gap-4 sm:grid-cols-3">
         <Panel title="Presupuesto disponible">
           <div className="text-3xl font-black tabular text-good">{formatMoney(team.budget)}</div>
           <div className="mt-1 text-xs text-muted">Patrocinio: +{formatMoney(team.sponsor)} por carrera · Costes: −{formatMoney(team.sponsor * 0.6)}</div>
@@ -48,10 +60,9 @@ export function DevelopmentView({ state }: { state: GameState }) {
         </Panel>
       </div>
 
-      {msg && <div className="rounded-lg border border-bad/40 bg-bad/10 px-4 py-2 text-sm text-bad">{msg}</div>}
-
-      <Panel title="Proyectos de desarrollo">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      {tab === "factory" ? (
+      <Panel title="Proyectos de desarrollo" className="min-h-0 shrink">
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {areas.map((area) => {
             const active = state.projects.find((p) => p.area === area);
             const value = areaValue(state, team, area);
@@ -101,9 +112,9 @@ export function DevelopmentView({ state }: { state: GameState }) {
           {series !== "f1" && " En F2 y F3 el chasis es monomarca: las mejoras representan el trabajo de ingeniería y preparación del equipo."}
         </p>
       </Panel>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Panel title="Instalaciones y personal">
+      ) : (
+      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-2">
+        <Panel title="Instalaciones y personal" className="self-start">
           <div className="space-y-3">
             {FACILITIES.map((f) => {
               const cost = f.cost * COST_SCALE[series];
@@ -125,25 +136,32 @@ export function DevelopmentView({ state }: { state: GameState }) {
             })}
           </div>
         </Panel>
-        <Panel title="Movimientos" bodyClass="p-0">
-          <ul className="max-h-80 divide-y divide-line/60 overflow-y-auto">
-            {state.finance.length === 0 && <li className="px-4 py-3 text-sm text-muted">Sin movimientos todavía.</li>}
-            {state.finance
-              .slice()
-              .reverse()
-              .slice(0, 60)
-              .map((f, i) => (
-                <li key={i} className="flex items-center justify-between gap-3 px-4 py-1.5 text-sm">
-                  <span className="truncate text-muted">{f.label}</span>
-                  <span className={cx("font-semibold tabular", f.amount >= 0 ? "text-good" : "text-bad")}>
-                    {f.amount >= 0 ? "+" : ""}
-                    {formatMoney(f.amount)}
-                  </span>
-                </li>
-              ))}
-          </ul>
-        </Panel>
+        <Movements state={state} />
       </div>
+      )}
     </div>
+  );
+}
+
+const MOVE_ROW = 32;
+
+function Movements({ state }: { state: GameState }) {
+  const moves = state.finance.slice().reverse();
+  const { ref, pager } = useRowPager(moves.length, MOVE_ROW);
+  return (
+    <Panel fill title="Movimientos" bodyClass="p-0" className="h-full" right={<Pager pager={pager} />}>
+      <ul ref={ref} className="min-h-0 flex-1 overflow-hidden">
+        {moves.length === 0 && <li className="px-4 py-3 text-sm text-muted">Sin movimientos todavía.</li>}
+        {moves.slice(pager.start, pager.end).map((f, i) => (
+          <li key={pager.start + i} className="flex items-center justify-between gap-3 border-b border-line/60 px-4 text-sm" style={{ height: MOVE_ROW }}>
+            <span className="truncate text-muted">{f.label}</span>
+            <span className={cx("shrink-0 font-semibold tabular", f.amount >= 0 ? "text-good" : "text-bad")}>
+              {f.amount >= 0 ? "+" : ""}
+              {formatMoney(f.amount)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Panel>
   );
 }

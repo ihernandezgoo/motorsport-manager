@@ -34,7 +34,7 @@ import { describeWeather, wetnessLabel } from "@/lib/game/weather";
 import { liveRace, type LiveSnapshot, type LiveTowerRow } from "@/lib/liveRace";
 import { ResultsTable } from "../screens/Results";
 import { TrackMap } from "../TrackMap";
-import { cx, SeriesBadge, Tyre, WeatherIcon } from "../ui";
+import { cx, Pager, SeriesBadge, Tyre, useRowPager, WeatherIcon } from "../ui";
 import { DriverPanel } from "./DriverPanel";
 import { FOLLOW_ZOOM, TrackView, type CameraMode } from "./TrackView";
 
@@ -149,7 +149,7 @@ export function RaceHud({
   const panelPlayers = slots.map((i) => snap.players[i]).filter(Boolean);
 
   return (
-    <div className="fixed inset-0 z-40 overflow-y-auto bg-black text-white lg:overflow-hidden">
+    <div className="fixed inset-0 z-40 overflow-hidden bg-black text-white">
       <TrackView
         circuitId={snap.circuitId}
         garageColors={Object.values(state.teams).filter((t) => t.series === snap.series).map((t) => t.color)}
@@ -276,8 +276,8 @@ export function RaceHud({
       </div>
 
       {/* Torre de tiempos */}
-      <div className="relative z-10 mx-3 mt-3 flex flex-col overflow-hidden rounded-lg border border-white/10 bg-[#15181e]/85 backdrop-blur lg:absolute lg:bottom-[290px] lg:left-3 lg:top-[68px] lg:m-0 lg:w-[300px]">
-        <div className="flex items-center justify-between border-b border-white/10 px-1 py-1 text-[11px] font-bold uppercase tracking-wider text-white/70">
+      <div className="relative z-10 mx-3 mt-3 flex max-h-[40vh] flex-col overflow-hidden rounded-lg border border-white/10 bg-[#15181e]/85 backdrop-blur lg:absolute lg:left-3 lg:top-[68px] lg:m-0 lg:max-h-[calc(100%-358px)] lg:w-[300px]">
+        <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-1 py-1 text-[11px] font-bold uppercase tracking-wider text-white/70">
           <button type="button" onClick={() => setCol((c) => (c + COLS.length - 1) % COLS.length)} className="grid h-6 w-6 place-items-center rounded hover:bg-white/10 hover:text-white" aria-label="Columna anterior">
             <ChevronLeft className="h-4 w-4" />
           </button>
@@ -286,34 +286,7 @@ export function RaceHud({
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
-        <ul className="min-h-0 flex-1 overflow-y-auto">
-          {snap.tower.map((r) => (
-            <li key={r.id}>
-              <button
-                type="button"
-                onClick={() => follow(r.id)}
-                className={cx(
-                  "relative grid h-[26px] w-full grid-cols-[22px_4px_minmax(0,1fr)_74px_18px_34px] items-center gap-1.5 px-2 text-left text-[12.5px] font-bold uppercase",
-                  r.isPlayer ? "bg-white text-black" : followId === r.id ? "bg-white/15" : "hover:bg-white/10",
-                  r.out && "opacity-40",
-                )}
-              >
-                <span className="text-right tabular">{r.out ? "—" : r.pos}</span>
-                <span className="h-4 w-1" style={{ background: r.color }} />
-                <span className="truncate tracking-wide">{r.last}</span>
-                <span className={cx("text-right font-mono text-[11.5px] tabular", r.inPit && "text-[#d97706]", !r.isPlayer && !r.inPit && "text-white/85")}>
-                  {towerValue(r, col)}
-                  {r.penalty > 0 && !r.out && <span className="text-[#f59e0b]"> +{r.penalty}</span>}
-                </span>
-                <span className="grid h-4 w-4 place-items-center rounded-full border-2 text-[8px] leading-none" style={{ borderColor: COMPOUND_INFO[r.compound].color }}>
-                  {COMPOUND_INFO[r.compound].letter.charAt(0)}
-                </span>
-                <span className="text-right font-mono text-[11px] tabular">{Math.round(100 - r.wear)}%</span>
-                {snap.fastest?.id === r.id && <span className="absolute -right-0 top-0 h-full w-1 bg-[#a855f7]" title="Vuelta rápida" />}
-              </button>
-            </li>
-          ))}
-        </ul>
+        <Tower snap={snap} col={col} followId={followId} onFollow={follow} />
       </div>
 
       {/* Minimapa y cámara */}
@@ -429,9 +402,9 @@ export function RaceHud({
       {data && <DataCentre snap={snap} state={state} onClose={() => setData(false)} />}
 
       {snap.finished && snap.result && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/75 p-4 backdrop-blur-sm">
-          <div className="mx-auto my-6 max-w-5xl rounded-2xl border border-line-2 bg-panel text-fg shadow-2xl">
-            <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-black/75 p-4 backdrop-blur-sm">
+          <div className="flex h-full max-h-[900px] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-line-2 bg-panel text-fg shadow-2xl">
+            <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
               <h2 className="flex items-center gap-2 text-lg font-black">
                 <Flag className="h-5 w-5" /> {snap.name} · Resultado final
               </h2>
@@ -444,13 +417,52 @@ export function RaceHud({
                 </button>
               </div>
             </header>
-            <div className="p-5">
+            <div className="flex min-h-0 flex-1 flex-col p-5">
               <ResultsTable state={state} result={snap.result} />
             </div>
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+const TOWER_ROW = 26;
+/** Coches visibles a la vez en la torre; el resto (p. ej. F3 con 30) se ve haciendo scroll. */
+const TOWER_VISIBLE = 22;
+
+/** Torre de tiempos: única zona del juego con scroll. Si falta altura en pantalla, muestra menos filas. */
+function Tower({ snap, col, followId, onFollow }: { snap: LiveSnapshot; col: number; followId: string | null; onFollow: (id: string) => void }) {
+  return (
+    <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain" style={{ maxHeight: TOWER_ROW * TOWER_VISIBLE }}>
+        {snap.tower.map((r) => (
+          <li key={r.id}>
+            <button
+              type="button"
+              onClick={() => onFollow(r.id)}
+              style={{ height: TOWER_ROW }}
+              className={cx(
+                "relative grid w-full grid-cols-[22px_4px_minmax(0,1fr)_74px_18px_34px] items-center gap-1.5 px-2 text-left text-[12.5px] font-bold uppercase",
+                r.isPlayer ? "bg-white text-black" : followId === r.id ? "bg-white/15" : "hover:bg-white/10",
+                r.out && "opacity-40",
+              )}
+            >
+              <span className="text-right tabular">{r.out ? "—" : r.pos}</span>
+              <span className="h-4 w-1" style={{ background: r.color }} />
+              <span className="truncate tracking-wide">{r.last}</span>
+              <span className={cx("text-right font-mono text-[11.5px] tabular", r.inPit && "text-[#d97706]", !r.isPlayer && !r.inPit && "text-white/85")}>
+                {towerValue(r, col)}
+                {r.penalty > 0 && !r.out && <span className="text-[#f59e0b]"> +{r.penalty}</span>}
+              </span>
+              <span className="grid h-4 w-4 place-items-center rounded-full border-2 text-[8px] leading-none" style={{ borderColor: COMPOUND_INFO[r.compound].color }}>
+                {COMPOUND_INFO[r.compound].letter.charAt(0)}
+              </span>
+              <span className="text-right font-mono text-[11px] tabular">{Math.round(100 - r.wear)}%</span>
+              {snap.fastest?.id === r.id && <span className="absolute -right-0 top-0 h-full w-1 bg-[#a855f7]" title="Vuelta rápida" />}
+            </button>
+          </li>
+        ))}
+    </ul>
   );
 }
 
@@ -504,9 +516,9 @@ function DataCentre({ snap, state, onClose }: { snap: LiveSnapshot; state: GameS
     { id: "strategy", label: "Estrategia" },
   ] as const;
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/75 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="mx-auto my-6 max-w-6xl rounded-2xl border border-white/10 bg-[#0d1117] text-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <header className="flex flex-wrap items-center gap-2 border-b border-white/10 px-5 py-3">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-black/75 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="flex h-full max-h-[900px] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0d1117] text-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-white/10 px-5 py-3">
           <h2 className="mr-4 text-lg font-black uppercase tracking-wider">Centro de datos</h2>
           {tabs.map((t) => (
             <button
@@ -522,74 +534,12 @@ function DataCentre({ snap, state, onClose }: { snap: LiveSnapshot; state: GameS
             ✕
           </button>
         </header>
-        <div className="p-5">
-          {tab === "timing" && (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[820px] text-sm">
-                <thead>
-                  <tr className="border-b border-white/10 text-left text-[10px] uppercase tracking-wider text-white/50">
-                    <th className="py-2 text-center">Pos</th>
-                    <th className="py-2">Piloto</th>
-                    <th className="py-2">Equipo</th>
-                    <th className="py-2 text-right">Dif.</th>
-                    <th className="py-2 text-right">Int.</th>
-                    <th className="py-2 text-right">Última</th>
-                    <th className="py-2 text-right">Mejor</th>
-                    <th className="py-2 pl-4">Neumático</th>
-                    <th className="py-2 text-center">Paradas</th>
-                    <th className="py-2 text-center">+/-</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {snap.tower.map((r) => {
-                    const d = state.drivers[r.id];
-                    return (
-                      <tr key={r.id} className={cx("border-b border-white/5", r.isPlayer && "bg-white/10")}>
-                        <td className="py-1.5 text-center font-bold tabular">{r.out ? "—" : r.pos}</td>
-                        <td className="py-1.5">
-                          <span className="mr-2 inline-block h-3 w-1 align-middle" style={{ background: r.color }} />
-                          <span className="font-mono text-xs text-white/50">{r.number}</span> <b>{d ? `${d.first} ${d.last}` : r.last}</b>
-                        </td>
-                        <td className="py-1.5 text-white/60">{d ? state.teams[d.teamId].short : ""}</td>
-                        <td className="py-1.5 text-right font-mono text-xs tabular">{r.out ? "OUT" : r.pos === 1 ? "—" : r.gap}</td>
-                        <td className="py-1.5 text-right font-mono text-xs tabular">{r.out || r.pos === 1 ? "" : r.interval}</td>
-                        <td className="py-1.5 text-right font-mono text-xs tabular">{r.lastLap ? formatLap(r.lastLap) : "—"}</td>
-                        <td className={cx("py-1.5 text-right font-mono text-xs tabular", snap.fastest?.id === r.id && "font-bold text-[#c084fc]")}>{isFinite(r.bestLap) ? formatLap(r.bestLap) : "—"}</td>
-                        <td className="py-1.5 pl-4">
-                          <span className="flex items-center gap-2">
-                            <Tyre c={r.compound} size={18} age={r.tyreAge} />
-                            <span className="text-xs tabular text-white/60">{Math.round(100 - r.wear)}%</span>
-                          </span>
-                        </td>
-                        <td className="py-1.5 text-center tabular">{r.pits}</td>
-                        <td className={cx("py-1.5 text-center text-xs tabular", r.delta > 0 ? "text-[#4ade80]" : r.delta < 0 ? "text-[#f87171]" : "text-white/40")}>
-                          {r.delta > 0 ? `▲${r.delta}` : r.delta < 0 ? `▼${-r.delta}` : "·"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-5">
+          {tab === "timing" && <TimingTable snap={snap} state={state} />}
           {tab === "events" && (
-            <div>
-              <label className="mb-3 flex items-center gap-2 text-sm text-white/70">
+            <EventLog events={events} playerIds={playerIds} filter={<label className="flex items-center gap-2 text-sm text-white/70">
                 <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} /> Solo mi equipo y avisos generales
-              </label>
-              <ul className="max-h-[60vh] divide-y divide-white/5 overflow-y-auto text-sm">
-                {events.length === 0 && <li className="py-2 text-white/50">Sin novedades.</li>}
-                {events.map((e, i) => (
-                  <li key={`${e.time}-${i}`} className={cx("flex gap-3 py-1.5", e.drivers.some((d) => playerIds.includes(d)) && "text-[#fde68a]")}>
-                    <span className="w-10 shrink-0 text-right text-xs tabular text-white/40">V{Math.max(1, e.lap)}</span>
-                    <span className="grid w-5 shrink-0 place-items-center">
-                      <EventIcon type={e.type} />
-                    </span>
-                    <span>{e.text}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+              </label>} />
           )}
           {tab === "weather" && (
             <div className="grid gap-6 md:grid-cols-2">
@@ -667,6 +617,99 @@ function DataCentre({ snap, state, onClose }: { snap: LiveSnapshot; state: GameS
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+const TIMING_ROW = 32;
+const TIMING_HEAD = 32;
+
+function TimingTable({ snap, state }: { snap: LiveSnapshot; state: GameState }) {
+  const { ref, pager } = useRowPager(snap.tower.length, TIMING_ROW, TIMING_HEAD);
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div ref={ref} className="min-h-0 flex-1 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-white/10 text-left text-[10px] uppercase tracking-wider text-white/50" style={{ height: TIMING_HEAD }}>
+              <th className="text-center">Pos</th>
+              <th>Piloto</th>
+              <th>Equipo</th>
+              <th className="text-right">Dif.</th>
+              <th className="text-right">Int.</th>
+              <th className="text-right">Última</th>
+              <th className="text-right">Mejor</th>
+              <th className="pl-4">Neumático</th>
+              <th className="text-center">Paradas</th>
+              <th className="text-center">+/-</th>
+            </tr>
+          </thead>
+          <tbody>
+            {snap.tower.slice(pager.start, pager.end).map((r) => {
+              const d = state.drivers[r.id];
+              return (
+                <tr key={r.id} className={cx("border-b border-white/5", r.isPlayer && "bg-white/10")} style={{ height: TIMING_ROW }}>
+                  <td className="text-center font-bold tabular">{r.out ? "—" : r.pos}</td>
+                  <td className="whitespace-nowrap">
+                    <span className="mr-2 inline-block h-3 w-1 align-middle" style={{ background: r.color }} />
+                    <span className="font-mono text-xs text-white/50">{r.number}</span> <b>{d ? `${d.first} ${d.last}` : r.last}</b>
+                  </td>
+                  <td className="whitespace-nowrap text-white/60">{d ? state.teams[d.teamId].short : ""}</td>
+                  <td className="text-right font-mono text-xs tabular">{r.out ? "OUT" : r.pos === 1 ? "—" : r.gap}</td>
+                  <td className="text-right font-mono text-xs tabular">{r.out || r.pos === 1 ? "" : r.interval}</td>
+                  <td className="text-right font-mono text-xs tabular">{r.lastLap ? formatLap(r.lastLap) : "—"}</td>
+                  <td className={cx("text-right font-mono text-xs tabular", snap.fastest?.id === r.id && "font-bold text-[#c084fc]")}>{isFinite(r.bestLap) ? formatLap(r.bestLap) : "—"}</td>
+                  <td className="pl-4">
+                    <span className="flex items-center gap-2">
+                      <Tyre c={r.compound} size={18} age={r.tyreAge} />
+                      <span className="text-xs tabular text-white/60">{Math.round(100 - r.wear)}%</span>
+                    </span>
+                  </td>
+                  <td className="text-center tabular">{r.pits}</td>
+                  <td className={cx("text-center text-xs tabular", r.delta > 0 ? "text-[#4ade80]" : r.delta < 0 ? "text-[#f87171]" : "text-white/40")}>
+                    {r.delta > 0 ? `▲${r.delta}` : r.delta < 0 ? `▼${-r.delta}` : "·"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex h-9 shrink-0 items-center justify-end pt-2">
+        <Pager pager={pager} dark />
+      </div>
+    </div>
+  );
+}
+
+const EVENT_ROW = 30;
+
+function EventLog({ events, playerIds, filter }: { events: RaceEvent[]; playerIds: string[]; filter: ReactNode }) {
+  const { ref, pager } = useRowPager(events.length, EVENT_ROW);
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
+        {filter}
+        <Pager pager={pager} dark />
+      </div>
+      <ul ref={ref} className="min-h-0 flex-1 overflow-hidden text-sm">
+        {events.length === 0 && <li className="py-2 text-white/50">Sin novedades.</li>}
+        {events.slice(pager.start, pager.end).map((e, i) => (
+          <li
+            key={`${e.time}-${pager.start + i}`}
+            className={cx("flex items-center gap-3 border-b border-white/5", e.drivers.some((d) => playerIds.includes(d)) && "text-[#fde68a]")}
+            style={{ height: EVENT_ROW }}
+          >
+            <span className="w-10 shrink-0 text-right text-xs tabular text-white/40">V{Math.max(1, e.lap)}</span>
+            <span className="grid w-5 shrink-0 place-items-center">
+              <EventIcon type={e.type} />
+            </span>
+            <span className="truncate" title={e.text}>
+              {e.text}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

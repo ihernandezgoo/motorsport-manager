@@ -1,45 +1,54 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { SERIES_SHORT } from "@/lib/game/data/teams";
 import { circuitOf, formatDateLong } from "@/lib/game/format";
 import { formatLap, formatRaceTime } from "@/lib/game/perf";
 import type { GameState, RaceResult, SeriesId } from "@/lib/game/types";
 import { weekendSeries } from "@/lib/game/weekend";
-import { cx, Modal, Nat, posColor, SeriesBadge, Stripe } from "../ui";
+import { cx, Modal, Nat, Pager, posColor, SeriesBadge, Stripe, useRowPager } from "../ui";
 
 const KIND_LABEL: Record<string, string> = { race: "Gran Premio", sprint: "Sprint", feature: "Principal" };
 
-export function ResultsTable({ state, result, compact }: { state: GameState; result: RaceResult; compact?: boolean }) {
+const ROW = 32;
+const HEAD = 32;
+
+/**
+ * Clasificación de una carrera, paginada para caber en el alto disponible.
+ * Debe ir dentro de una columna flexible con alto definido.
+ */
+export function ResultsTable({ state, result, compact, footer }: { state: GameState; result: RaceResult; compact?: boolean; footer?: ReactNode }) {
   const bestLap = Math.min(...result.entries.map((e) => e.bestLap).filter((x) => isFinite(x)));
+  const { ref, pager } = useRowPager(result.entries.length, ROW, HEAD, result.entries.findIndex((e) => e.teamId === state.player.teamId));
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[640px] text-sm">
+    <div className="flex min-h-0 flex-1 flex-col">
+    <div ref={ref} className="min-h-0 flex-1 overflow-hidden">
+      <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-line text-left text-[10px] uppercase tracking-wider text-dim">
-            <th className="py-2 pr-2 text-center">Pos</th>
-            <th className="py-2 pr-2">Piloto</th>
-            {!compact && <th className="py-2 pr-2">Equipo</th>}
-            <th className="py-2 pr-2 text-center">Salida</th>
-            <th className="py-2 pr-2 text-right">Tiempo / Dif.</th>
-            <th className="py-2 pr-2 text-center">Paradas</th>
-            <th className="py-2 pr-2 text-right">Mejor vuelta</th>
-            <th className="py-2 text-right">Pts</th>
+          <tr className="border-b border-line text-left text-[10px] uppercase tracking-wider text-dim" style={{ height: HEAD }}>
+            <th className="pr-2 text-center">Pos</th>
+            <th className="pr-2">Piloto</th>
+            {!compact && <th className="pr-2">Equipo</th>}
+            <th className="pr-2 text-center">Salida</th>
+            <th className="pr-2 text-right">Tiempo / Dif.</th>
+            <th className="pr-2 text-center">Paradas</th>
+            <th className="pr-2 text-right">Mejor vuelta</th>
+            <th className="text-right">Pts</th>
           </tr>
         </thead>
         <tbody>
-          {result.entries.map((e) => {
+          {result.entries.slice(pager.start, pager.end).map((e) => {
             const d = state.drivers[e.driverId];
             const t = state.teams[e.teamId];
             const mine = e.teamId === state.player.teamId;
             const delta = e.status === "FIN" ? e.grid - e.pos : 0;
             return (
-              <tr key={e.driverId} className={cx("border-b border-line/60", mine && "bg-accent/10")}>
-                <td className="py-1.5 pr-2 text-center">
+              <tr key={e.driverId} className={cx("border-b border-line/60", mine && "bg-accent/10")} style={{ height: ROW }}>
+                <td className="pr-2 text-center">
                   <span className={cx("inline-block min-w-7 rounded px-1.5 py-0.5 text-xs font-bold tabular", posColor(e.pos, e.status, e.points))}>
                     {e.status === "DNF" ? "AB" : e.pos}
                   </span>
                 </td>
-                <td className="py-1.5 pr-2">
-                  <div className="flex items-center gap-2">
+                <td className="pr-2">
+                  <div className="flex items-center gap-2 whitespace-nowrap">
                     <Stripe color={t.color} className="h-5" />
                     <span className="w-6 text-right font-mono text-xs text-muted">{d.number}</span>
                     <span className="truncate font-semibold">
@@ -49,23 +58,28 @@ export function ResultsTable({ state, result, compact }: { state: GameState; res
                     {e.pole && <span className="rounded bg-panel-3 px-1 text-[9px] font-bold text-muted">POLE</span>}
                   </div>
                 </td>
-                {!compact && <td className="py-1.5 pr-2 text-muted">{t.short}</td>}
-                <td className="py-1.5 pr-2 text-center tabular text-muted">
+                {!compact && <td className="whitespace-nowrap pr-2 text-muted">{t.short}</td>}
+                <td className="whitespace-nowrap pr-2 text-center tabular text-muted">
                   {e.grid}
                   {delta !== 0 && <span className={cx("ml-1 text-[10px]", delta > 0 ? "text-good" : "text-bad")}>{delta > 0 ? `▲${delta}` : `▼${-delta}`}</span>}
                 </td>
-                <td className="py-1.5 pr-2 text-right font-mono text-xs tabular">
+                <td className="whitespace-nowrap pr-2 text-right font-mono text-xs tabular">
                   {e.status === "DNF" ? <span className="text-bad">{e.reason ?? "Abandono"} (v{e.laps})</span> : e.pos === 1 ? formatRaceTime(e.time) : e.gap}
                   {e.penalty > 0 && <span className="ml-1 text-warn">(+{e.penalty}s)</span>}
                 </td>
-                <td className="py-1.5 pr-2 text-center tabular">{e.pits}</td>
-                <td className={cx("py-1.5 pr-2 text-right font-mono text-xs tabular", e.bestLap === bestLap ? "font-bold text-purple" : "text-muted")}>{formatLap(e.bestLap)}</td>
-                <td className="py-1.5 text-right font-bold tabular">{e.points > 0 ? e.points : ""}</td>
+                <td className="pr-2 text-center tabular">{e.pits}</td>
+                <td className={cx("pr-2 text-right font-mono text-xs tabular", e.bestLap === bestLap ? "font-bold text-purple" : "text-muted")}>{formatLap(e.bestLap)}</td>
+                <td className="text-right font-bold tabular">{e.points > 0 ? e.points : ""}</td>
               </tr>
             );
           })}
         </tbody>
       </table>
+    </div>
+      <div className="flex h-9 shrink-0 items-center justify-between gap-3 pt-2">
+        <div className="min-w-0 truncate text-xs text-muted">{footer}</div>
+        <Pager pager={pager} />
+      </div>
     </div>
   );
 }
@@ -83,8 +97,8 @@ export function WeekendResults({ state, weekendIndex }: { state: GameState; week
   const current = list[Number(selIdxStr)] ?? list[0];
   if (series.every((s) => results(s).length === 0)) return <p className="text-sm text-muted">Este fin de semana aún no se ha disputado.</p>;
   return (
-    <div>
-      <div className="mb-4 flex flex-wrap gap-2">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="mb-3 flex shrink-0 flex-wrap gap-2">
         {series.map((s) =>
           results(s).map((r, i) => (
             <button
@@ -103,7 +117,7 @@ export function WeekendResults({ state, weekendIndex }: { state: GameState; week
       </div>
       {current && (
         <>
-          <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+          <div className="mb-2 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
             <span className="font-semibold text-fg">
               {SERIES_SHORT[current.series]} · {current.name}
             </span>
@@ -116,7 +130,7 @@ export function WeekendResults({ state, weekendIndex }: { state: GameState; week
               </span>
             )}
           </div>
-          <ResultsTable state={state} result={current} />
+          <ResultsTable key={sel} state={state} result={current} />
         </>
       )}
     </div>
@@ -128,7 +142,7 @@ export function WeekendResultsModal({ state, weekendIndex, onClose }: { state: G
   const wk = state.calendar[weekendIndex];
   const c = circuitOf(wk);
   return (
-    <Modal open wide onClose={onClose} title={`Resultados · ${c.city} (${formatDateLong(wk.date)})`}>
+    <Modal open wide tall onClose={onClose} title={`Resultados · ${c.city} (${formatDateLong(wk.date)})`}>
       <WeekendResults state={state} weekendIndex={weekendIndex} />
     </Modal>
   );

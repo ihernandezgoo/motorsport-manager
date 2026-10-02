@@ -10,7 +10,7 @@ import type { Compound, GameState, SessionDef, WeekendState } from "@/lib/game/t
 import { earlyRaceWetness, forecastLabel, wetnessLabel } from "@/lib/game/weather";
 import { raceConfigFor } from "@/lib/game/weekend";
 import { liveRace, useLiveRace } from "@/lib/liveRace";
-import { Btn, cx, Panel, Segmented, Stripe, Tyre } from "../ui";
+import { Btn, cx, PagedGrid, Panel, Segmented, Stripe, Tabs, Tyre } from "../ui";
 import { RaceHud } from "../race/RaceHud";
 
 export function RaceSession({
@@ -66,6 +66,7 @@ function RacePrep({ state, ws, session, liveKey }: { state: GameState; ws: Weeke
 
   const [compound, setCompound] = useState<Record<string, Compound>>(() => Object.fromEntries(mine.map((d) => [d.id, defaultCompound(d.id)])));
   const [auto, setAuto] = useState<Record<string, boolean>>(() => Object.fromEntries(mine.map((d) => [d.id, false])));
+  const [side, setSide] = useState<"grid" | "tyres">("grid");
 
   const start = (instant: boolean) => {
     const full = raceConfigFor(state, ws, session.key, { playerTeamId: team.id, startCompounds: compound });
@@ -83,10 +84,9 @@ function RacePrep({ state, ws, session, liveKey }: { state: GameState; ws: Weeke
   const reversed = ws.series !== "f1" && session.kind === "sprint";
 
   return (
-    <div className="space-y-4">
-      <div className="grid gap-4 xl:grid-cols-[1fr_380px]">
-        <Panel title={`${session.label} · ${cfg.laps} vueltas`}>
-          <div className="mb-4 grid gap-3 rounded-lg border border-line bg-panel-2 p-3 text-sm sm:grid-cols-3">
+    <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <Panel fill className="h-full" title={`${session.label} · ${cfg.laps} vueltas`}>
+          <div className="mb-3 grid shrink-0 gap-3 rounded-lg border border-line bg-panel-2 p-3 text-sm sm:grid-cols-3">
             <div>
               <div className="text-xs text-muted">Pronóstico</div>
               <div className="font-semibold">{forecastLabel(Math.max(...plan.forecast))}</div>
@@ -107,47 +107,44 @@ function RacePrep({ state, ws, session, liveKey }: { state: GameState; ws: Weeke
               <div className="text-[12px] leading-snug">{rules}</div>
             </div>
           </div>
-          <div className="space-y-4">
+          <div className="min-h-0 flex-1 space-y-2 overflow-hidden">
             {mine.map((d) => {
               const pos = cfg.grid.indexOf(d.id) + 1;
               const c = compound[d.id];
               const s = isWetTyre(c) ? null : suggestion(d.id, c);
               return (
-                <div key={d.id} className="rounded-lg border border-line p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
+                <div key={d.id} className="rounded-lg border border-line px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                    <div className="flex w-36 items-center gap-2">
                       <Stripe color={team.color} className="h-6" />
-                      <span className="text-lg font-black">
+                      <span className="truncate text-lg font-black">
                         P{pos} · {d.last}
                       </span>
                     </div>
-                    <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
+                    <Segmented
+                      value={c}
+                      onChange={(v) => setCompound((x) => ({ ...x, [d.id]: v }))}
+                      options={compounds.map((cp) => ({ value: cp, title: COMPOUND_INFO[cp].name, label: <span className="flex items-center gap-1"><Tyre c={cp} size={18} /> {COMPOUND_INFO[cp].name}</span>, activeColor: "#2f3a4a" }))}
+                    />
+                    <label className="ml-auto flex cursor-pointer items-center gap-2 text-xs text-muted">
                       <input type="checkbox" checked={auto[d.id]} onChange={(e) => setAuto((a) => ({ ...a, [d.id]: e.target.checked }))} />
                       Delegar en el ingeniero (IA)
                     </label>
                   </div>
-                  <div className="mt-3 flex flex-wrap items-center gap-3">
-                    <span className="text-xs text-muted">Neumático de salida</span>
-                    <Segmented
-                      value={c}
-                      onChange={(v) => setCompound((x) => ({ ...x, [d.id]: v }))}
-                      options={compounds.map((cp) => ({ value: cp, label: <span className="flex items-center gap-1"><Tyre c={cp} size={18} /> {COMPOUND_INFO[cp].name}</span>, activeColor: "#2f3a4a" }))}
-                    />
-                  </div>
-                  <div className="mt-3 text-xs text-muted">
+                  <div className="mt-1 truncate text-xs text-muted">
                     {s ? (
                       <>
                         Estrategia sugerida: <b className="text-fg">{describePlan(s)}</b>
                       </>
                     ) : (
-                      "Con neumáticos de lluvia el ingeniero recomienda vigilar el radar y cambiar a seco cuando la humedad baje del 15 %."
+                      "Con lluvia: vigila el radar y cambia a seco cuando la humedad baje del 15 %."
                     )}
                   </div>
                 </div>
               );
             })}
           </div>
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="mt-3 flex shrink-0 flex-wrap gap-2">
             <Btn variant="primary" size="lg" onClick={() => start(false)}>
               <Flag className="h-5 w-5" /> Comenzar carrera
             </Btn>
@@ -157,8 +154,23 @@ function RacePrep({ state, ws, session, liveKey }: { state: GameState; ws: Weeke
           </div>
         </Panel>
 
-        <div className="space-y-4">
-          <Panel title="Vida estimada de los neumáticos">
+        <div className="hidden min-h-0 lg:block">
+          <Panel
+            fill
+            className="h-full"
+            title={
+              <Tabs
+                value={side}
+                onChange={setSide}
+                tabs={[
+                  { id: "grid", label: "Parrilla" },
+                  { id: "tyres", label: "Neumáticos" },
+                ]}
+              />
+            }
+          >
+          {side === "tyres" ? (
+            <>
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-[10px] uppercase tracking-wider text-dim">
@@ -188,24 +200,33 @@ function RacePrep({ state, ws, session, liveKey }: { state: GameState; ws: Weeke
               </tbody>
             </table>
             <p className="mt-2 text-[11px] text-dim">Vueltas hasta ~75 % de desgaste a ritmo neutral. Atacar las acorta; conservar las alarga.</p>
-          </Panel>
-          <Panel title={reversed ? "Parrilla (top invertido)" : "Parrilla de salida"} bodyClass="p-3">
-            <ol className="grid grid-cols-2 gap-x-3 gap-y-1">
-              {cfg.grid.map((id, i) => {
+            </>
+          ) : (
+            <PagedGrid
+              items={cfg.grid}
+              minW={110}
+              minH={28}
+              maxCols={2}
+              gap={6}
+              keyOf={(id) => id}
+              focus={cfg.grid.findIndex((id) => state.drivers[id].teamId === team.id)}
+              header={<span className="text-xs text-muted">{reversed ? "Top invertido" : "Orden de salida"}</span>}
+              render={(id, i) => {
                 const d = state.drivers[id];
                 const t = state.teams[d.teamId];
                 return (
-                  <li key={id} className={cx("flex items-center gap-2 rounded px-2 py-1 text-xs", i % 2 === 1 && "mt-3", t.id === team.id ? "bg-accent/15" : "bg-panel-2")}>
+                  <div className={cx("flex h-full items-center gap-2 rounded px-2 text-xs", t.id === team.id ? "bg-accent/15" : "bg-panel-2")}>
                     <span className="w-5 text-right font-bold tabular text-muted">{i + 1}</span>
                     <Stripe color={t.color} className="h-4" />
                     <span className="font-semibold">{d.code}</span>
-                  </li>
+                    <span className="truncate text-muted">{d.last}</span>
+                  </div>
                 );
-              })}
-            </ol>
+              }}
+            />
+          )}
           </Panel>
         </div>
-      </div>
     </div>
   );
 }

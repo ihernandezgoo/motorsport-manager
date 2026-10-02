@@ -1,7 +1,7 @@
-import { CarFront, Flag, Mail, Trophy, Users } from "lucide-react";
+import { CarFront, Flag, Mail, Trophy, Users, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 import { enterWeekend, nextSeason, simulateNextWeekend, simulateRestOfSeason } from "@/lib/actions";
-import { SERIES_NAMES, SERIES_SHORT } from "@/lib/game/data/teams";
+import { SERIES_SHORT } from "@/lib/game/data/teams";
 import { circuitOf, driverName, formatDate, formatDateLong, teamDrivers, teamOverall } from "@/lib/game/format";
 import { driverOverall, formatMoney } from "@/lib/game/perf";
 import { helmetOf } from "@/lib/game/data/liveries";
@@ -10,10 +10,13 @@ import type { GameState, SeriesId } from "@/lib/game/types";
 import { weekendSeries } from "@/lib/game/weekend";
 import { DriverPortrait, TeamCar } from "../art/Photos";
 import { TrackView } from "../race/TrackView";
-import { Btn, cx, Meter, Nat, Panel, SeriesBadge, Stat, Stripe } from "../ui";
+import { Btn, cx, Meter, Nat, Pager, Panel, SeriesBadge, Stat, Stripe, Tabs, useRowPager } from "../ui";
+
+type HqTab = "summary" | "team" | "news";
 
 export function Hq({ state, onEnterWeekend, onShowResults }: { state: GameState; onEnterWeekend: () => void; onShowResults: (idx: number) => void }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const [tab, setTab] = useState<HqTab>("summary");
   const over = isSeasonOver(state);
   const series = state.player.series;
   const team = state.teams[state.player.teamId];
@@ -37,78 +40,30 @@ export function Hq({ state, onEnterWeekend, onShowResults }: { state: GameState;
   };
 
   return (
-    <div className="mx-auto max-w-7xl space-y-4">
+    <div className="mx-auto flex h-full w-full max-w-[1500px] min-h-0 flex-col gap-3">
       {busy && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 backdrop-blur-sm">
           <div className="rounded-xl border border-line-2 bg-panel px-6 py-4 font-semibold">{busy}</div>
         </div>
       )}
-      {over ? <SeasonOver state={state} /> : <NextEvent state={state} onEnter={onEnterWeekend} onSimulated={onShowResults} onSimRest={simRest} />}
+      <Tabs
+        className="shrink-0 self-start"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: "summary", label: "Resumen" },
+          { id: "team", label: "Mi equipo" },
+          { id: "news", label: "Noticias" },
+        ]}
+      />
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="space-y-4 lg:col-span-2">
-          <Panel title="Estado del equipo" icon={CarFront}>
-            <TeamCar team={team} series={series} number={myDrivers[0]?.number} helmet={myDrivers[0] ? helmetOf(myDrivers[0]).base : undefined} className="mx-auto mb-3 h-28 w-full max-w-xl" />
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              <Stat label="Campeonato" value={teamPos ? `P${teamPos}` : "—"} sub={`${teamPts} puntos`} />
-              <Stat label="Rendimiento coche" value={`${teamOverall(state, team)}`} sub={`${carRank}º de ${rankCar.length}`} />
-              <Stat label="Presupuesto" value={formatMoney(team.budget)} sub={`+${formatMoney(team.sponsor)} / carrera`} />
-              <Stat label="Proyectos activos" value={state.projects.length} sub={state.projects.length ? "En la fábrica" : "Ninguno"} />
-            </div>
-          </Panel>
-
-          <div className={cx("grid gap-4", myDrivers.length > 2 ? "md:grid-cols-3" : "md:grid-cols-2")}>
-            {myDrivers.map((d) => {
-              const st = ds.find((x) => x.driverId === d.id);
-              const pos = ds.findIndex((x) => x.driverId === d.id) + 1;
-              return (
-                <div key={d.id} className="mm-panel relative overflow-hidden rounded-xl p-4">
-                  <div className="absolute right-3 top-0 text-7xl font-black italic opacity-25" style={{ color: team.color }}>
-                    {d.number}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <DriverPortrait driver={d} color={team.color} className="h-20 w-20" />
-                    <div>
-                      <div className="text-xs text-muted">
-                        {d.first} <Nat code={d.nat} />
-                      </div>
-                      <div className="text-lg font-black uppercase">{d.last}</div>
-                    </div>
-                  </div>
-                  <div className="mt-3 grid grid-cols-3 gap-2">
-                    <Stat label="Posición" value={started ? `P${pos}` : "—"} />
-                    <Stat label="Puntos" value={st?.points ?? 0} />
-                    <Stat label="Media" value={driverOverall(d)} />
-                  </div>
-                  <div className="mt-2 text-xs text-muted">
-                    {st?.wins ?? 0} victorias · {st?.podiums ?? 0} podios · {st?.poles ?? 0} poles · {st?.dnfs ?? 0} abandonos
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <Panel title="Noticias del paddock" icon={Mail} bodyClass="p-0">
-            <ul className="max-h-[420px] divide-y divide-line overflow-y-auto">
-              {state.news.slice(0, 25).map((n) => (
-                <li key={n.id} className="flex gap-3 px-4 py-2.5">
-                  <div className="w-12 shrink-0 pt-0.5 text-[11px] text-dim">{formatDate(n.date)}</div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-sm font-semibold">
-                      {n.series && <SeriesBadge s={n.series} />}
-                      <span>{n.title}</span>
-                    </div>
-                    {n.body && <div className="mt-0.5 text-xs text-muted">{n.body}</div>}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </Panel>
-        </div>
-
-        <div className="space-y-4">
-          <Panel title={`Pilotos · ${SERIES_NAMES[series]}`} icon={Users} bodyClass="p-0">
-            <MiniTable
+      {tab === "summary" && (
+        <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+          {over ? <SeasonOver state={state} /> : <NextEvent state={state} onEnter={onEnterWeekend} onSimulated={onShowResults} onSimRest={simRest} />}
+          <div className="hidden min-h-0 flex-col gap-4 lg:flex">
+            <Top10
+              title={`Top 10 pilotos ${SERIES_SHORT[series]}`}
+              icon={Users}
               rows={ds.slice(0, 10).map((s, i) => ({
                 key: s.driverId,
                 pos: i + 1,
@@ -118,10 +73,10 @@ export function Hq({ state, onEnterWeekend, onShowResults }: { state: GameState;
                 mine: s.teamId === team.id,
               }))}
             />
-          </Panel>
-          <Panel title="Equipos" icon={Trophy} bodyClass="p-0">
-            <MiniTable
-              rows={ts.map((s, i) => ({
+            <Top10
+              title="Top 10 equipos"
+              icon={Trophy}
+              rows={ts.slice(0, 10).map((s, i) => ({
                 key: s.teamId,
                 pos: i + 1,
                 color: state.teams[s.teamId].color,
@@ -130,30 +85,164 @@ export function Hq({ state, onEnterWeekend, onShowResults }: { state: GameState;
                 mine: s.teamId === team.id,
               }))}
             />
+          </div>
+        </div>
+      )}
+
+      {tab === "team" && (
+        <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+          <Panel fill title="Estado del equipo" icon={CarFront} className="h-full">
+            <TeamCar team={team} series={series} number={myDrivers[0]?.number} helmet={myDrivers[0] ? helmetOf(myDrivers[0]).base : undefined} className="mx-auto mb-3 min-h-0 w-full max-w-xl flex-1" />
+            <div className="grid shrink-0 grid-cols-2 gap-4">
+              <Stat label="Campeonato" value={teamPos ? `P${teamPos}` : "—"} sub={`${teamPts} puntos`} />
+              <Stat label="Rendimiento coche" value={`${teamOverall(state, team)}`} sub={`${carRank}º de ${rankCar.length}`} />
+              <Stat label="Presupuesto" value={formatMoney(team.budget)} sub={`+${formatMoney(team.sponsor)} / carrera`} />
+              <Stat label="Proyectos activos" value={state.projects.length} sub={state.projects.length ? "En la fábrica" : "Ninguno"} />
+            </div>
           </Panel>
+          <div className="flex min-h-0 flex-col gap-4">
+            {myDrivers.map((d) => {
+              const st = ds.find((x) => x.driverId === d.id);
+              const pos = ds.findIndex((x) => x.driverId === d.id) + 1;
+              return (
+                <div key={d.id} className="mm-panel relative flex min-h-0 flex-1 items-center gap-4 overflow-hidden rounded-xl p-4">
+                  <div className="absolute right-3 top-0 text-7xl font-black italic opacity-25" style={{ color: team.color }}>
+                    {d.number}
+                  </div>
+                  <DriverPortrait driver={d} color={team.color} className="aspect-square h-full max-h-24 min-h-12" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs text-muted">
+                      {d.first} <Nat code={d.nat} />
+                    </div>
+                    <div className="truncate text-lg font-black uppercase">{d.last}</div>
+                    <div className="mt-1 grid grid-cols-3 gap-2">
+                      <Stat label="Posición" value={started ? `P${pos}` : "—"} />
+                      <Stat label="Puntos" value={st?.points ?? 0} />
+                      <Stat label="Media" value={driverOverall(d)} />
+                    </div>
+                    <div className="mt-1 truncate text-xs text-muted">
+                      {st?.wins ?? 0} victorias · {st?.podiums ?? 0} podios · {st?.poles ?? 0} poles · {st?.dnfs ?? 0} abandonos
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {tab === "news" && (
+        <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <News state={state} />
           {lastIdx >= 0 && (
-            <Panel title="Última jornada" icon={Flag} right={<Btn size="xs" variant="ghost" onClick={() => onShowResults(lastIdx)}>Ver resultados</Btn>}>
+            <Panel className="hidden self-start lg:block" title="Última jornada" icon={Flag} right={<Btn size="xs" variant="ghost" onClick={() => onShowResults(lastIdx)}>Ver resultados</Btn>}>
               <LastWinners state={state} idx={lastIdx} />
             </Panel>
           )}
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
-function MiniTable({ rows }: { rows: { key: string; pos: number; color: string; label: string; value: number; mine: boolean }[] }) {
+const NEWS_ROW = 56;
+
+function News({ state }: { state: GameState }) {
+  const { ref, pager } = useRowPager(state.news.length, NEWS_ROW);
   return (
-    <ul className="divide-y divide-line/60">
-      {rows.map((r) => (
-        <li key={r.key} className={cx("flex items-center gap-2 px-4 py-1.5 text-sm", r.mine && "bg-accent/10")}>
-          <span className="w-5 text-right text-xs font-bold tabular text-muted">{r.pos}</span>
-          <Stripe color={r.color} className="h-4" />
-          <span className={cx("truncate", r.mine && "font-semibold")}>{r.label}</span>
-          <span className="ml-auto font-bold tabular">{r.value}</span>
-        </li>
-      ))}
-    </ul>
+    <Panel fill title="Noticias del paddock" icon={Mail} bodyClass="p-0" className="min-h-0 flex-1" right={<Pager pager={pager} />}>
+      <ul ref={ref} className="min-h-0 flex-1 overflow-hidden">
+        {state.news.slice(pager.start, pager.end).map((n) => (
+          <li key={n.id} className="flex gap-3 border-b border-line px-4 py-2" style={{ height: NEWS_ROW }}>
+            <div className="w-12 shrink-0 pt-0.5 text-[11px] text-dim">{formatDate(n.date)}</div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                {n.series && <SeriesBadge s={n.series} />}
+                <span className="truncate">{n.title}</span>
+              </div>
+              {n.body && (
+                <div className="mt-0.5 truncate text-xs text-muted" title={n.body}>
+                  {n.body}
+                </div>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Panel>
+  );
+}
+
+/** Top 10 sin paginar: las diez filas se reparten el alto del panel. */
+function Top10({ title, icon, rows }: { title: string; icon: LucideIcon; rows: { key: string; pos: number; color: string; label: string; value: number; mine: boolean }[] }) {
+  return (
+    <Panel fill title={title} icon={icon} bodyClass="p-0" className="flex-1">
+      <ol className="flex min-h-0 flex-1 flex-col py-1">
+        {rows.map((r) => (
+          <li key={r.key} className={cx("flex min-h-0 max-h-8 flex-1 items-center gap-2 px-4 text-sm", r.mine && "bg-accent/10")}>
+            <span className="w-5 text-right text-xs font-bold tabular text-muted">{r.pos}</span>
+            <Stripe color={r.color} className="h-4 self-center" />
+            <span className={cx("truncate", r.mine && "font-semibold")}>{r.label}</span>
+            <span className="ml-auto font-bold tabular">{r.value}</span>
+          </li>
+        ))}
+      </ol>
+    </Panel>
+  );
+}
+
+/** Ficha del equipo del jugador dentro del próximo evento: coche, campeonato, presupuesto y pilotos. */
+function TeamSnapshot({ state }: { state: GameState }) {
+  const series = state.player.series;
+  const team = state.teams[state.player.teamId];
+  const ds = driverStandings(state, series);
+  const ts = teamStandings(state, series);
+  const started = state.results.some((r) => r.series === series);
+  const teamPos = ts.findIndex((t) => t.teamId === team.id) + 1;
+  const teamPts = ts.find((t) => t.teamId === team.id)?.points ?? 0;
+  const drivers = teamDrivers(state, team.id);
+  const rank = Object.values(state.teams)
+    .filter((t) => t.series === series)
+    .map((t) => ({ id: t.id, s: teamOverall(state, t) }))
+    .sort((a, b) => b.s - a.s);
+  const carRank = rank.findIndex((x) => x.id === team.id) + 1;
+  return (
+    <div
+      className="mt-4 flex min-h-0 flex-1 flex-col gap-2 overflow-hidden rounded-xl border border-white/10 p-3"
+      style={{ background: `linear-gradient(135deg, ${team.color}44 0%, #161a21 60%)` }}
+    >
+      <div className="flex min-h-[60px] flex-1 gap-4">
+        <div className="relative min-h-0 min-w-0 flex-1">
+          <div className="absolute left-0 top-0 z-10 flex items-center gap-2">
+            <Stripe color={team.color} className="h-4" />
+            <span className="truncate text-sm font-black uppercase tracking-wide">{team.name}</span>
+          </div>
+          <TeamCar team={team} series={series} number={drivers[0]?.number} helmet={drivers[0] ? helmetOf(drivers[0]).base : undefined} className="h-full w-full" />
+        </div>
+        <div className="flex w-[48%] shrink-0 flex-col justify-center gap-0.5">
+          {drivers.map((d) => {
+            const pos = ds.findIndex((x) => x.driverId === d.id) + 1;
+            const pts = ds.find((x) => x.driverId === d.id)?.points ?? 0;
+            return (
+              <div key={d.id} className="flex items-center gap-2 text-sm">
+                <DriverPortrait driver={d} color={team.color} className="h-5 w-5" rounded="rounded-full" />
+                <span className="w-5 text-right font-mono text-xs text-muted">{d.number}</span>
+                <span className="truncate font-semibold">{d.last}</span>
+                <span className="ml-auto shrink-0 text-xs tabular text-muted">
+                  {started ? `P${pos}` : "—"} · <b className="text-fg">{pts}</b> pts
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div className="grid shrink-0 grid-cols-4 gap-3 border-t border-white/10 pt-2">
+        <Stat label="Campeonato" value={started ? `P${teamPos}` : "—"} sub={`${teamPts} pts`} />
+        <Stat label="Coche" value={teamOverall(state, team)} sub={`${carRank}º de ${rank.length}`} />
+        <Stat label="Presupuesto" value={formatMoney(team.budget)} sub={`+${formatMoney(team.sponsor)}/carrera`} />
+        <Stat label="Proyectos" value={state.projects.length} sub={state.projects.length ? "En fábrica" : "Ninguno"} />
+      </div>
+    </div>
   );
 }
 
@@ -190,17 +279,18 @@ function NextEvent({ state, onEnter, onSimulated, onSimRest }: { state: GameStat
   const total = state.calendar.filter((w) => w[state.player.series]).length;
   const title = wk.f1?.name ?? wk.f2?.name ?? wk.f3?.name ?? c.name;
   return (
-    <section className="mm-panel relative overflow-hidden rounded-2xl">
-      <header className="flex items-center gap-2.5 border-b border-white/5 px-5 py-3 text-sm font-black uppercase tracking-[0.08em]">
+    <section className="mm-panel relative flex min-h-0 flex-col overflow-hidden rounded-2xl">
+      <header className="flex shrink-0 items-center gap-2.5 border-b border-white/5 px-5 py-3 text-sm font-black uppercase tracking-[0.08em]">
         <Flag className="h-5 w-5 text-[#7aa2ff]" strokeWidth={2.2} /> Próximo evento
         <span className="ml-auto text-xs font-semibold normal-case tracking-normal text-muted">{formatDateLong(wk.date)}</span>
       </header>
-      <div className="grid gap-4 p-5 md:grid-cols-[1fr_380px]">
-        <div className="min-w-0">
+      <div className="grid min-h-0 flex-1 gap-4 p-5 md:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)]">
+        <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+          <div className="shrink-0">
           <div className="text-sm font-bold uppercase tracking-wider text-muted">
             {c.country} <span className="font-semibold normal-case">· {title}</span>
           </div>
-          <h2 className="mt-1 text-4xl font-light uppercase tracking-[0.12em] lg:text-5xl">{c.city}</h2>
+          <h2 className="mt-1 truncate text-4xl font-light uppercase tracking-[0.12em] lg:text-5xl [@media(max-height:860px)]:text-4xl">{c.city}</h2>
           <div className="mt-1 text-sm text-muted">{c.name}</div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {series.map((s) => (
@@ -215,13 +305,14 @@ function NextEvent({ state, onEnter, onSimulated, onSimRest }: { state: GameStat
             <Stat label="Vueltas GP" value={c.laps} />
             <Stat label="Adelantar" value={c.overtaking > 0.45 ? "Fácil" : c.overtaking > 0.25 ? "Medio" : "Difícil"} />
           </div>
-          <div className="mt-3 grid max-w-lg grid-cols-2 gap-x-6 gap-y-2">
+          {/* En pantallas bajas se ocultan para dejar sitio a la ficha del equipo. */}
+          <div className="mt-3 grid max-w-lg grid-cols-2 gap-x-6 gap-y-2 [@media(max-height:860px)]:hidden">
             <Characteristic label="Desgaste de neumáticos" value={c.wear / 1.4} />
             <Characteristic label="Sensibilidad a potencia" value={c.power} />
             <Characteristic label="Carga aerodinámica" value={c.downforce} />
             <Characteristic label="Probabilidad de lluvia" value={c.rain / 0.6} />
           </div>
-          <div className="mt-5 flex flex-wrap gap-2">
+          <div className="mt-4 flex flex-wrap gap-2">
             {mine ? (
               <Btn
                 variant="primary"
@@ -250,8 +341,10 @@ function NextEvent({ state, onEnter, onSimulated, onSimRest }: { state: GameStat
             </Btn>
           </div>
           {!mine && <p className="mt-2 text-xs text-muted">Tu categoría no compite aquí: se simularán las carreras de {series.map((s) => SERIES_SHORT[s]).join(" y ")}.</p>}
+          </div>
+          <TeamSnapshot state={state} />
         </div>
-        <TrackView circuitId={c.id} camera={{ kind: "overview" }} interactive={false} className="h-56 w-full rounded-xl md:h-full md:min-h-64" />
+        <TrackView circuitId={c.id} camera={{ kind: "overview" }} interactive={false} className="hidden h-full min-h-0 w-full rounded-xl md:block" />
       </div>
     </section>
   );
@@ -270,7 +363,7 @@ function SeasonOver({ state }: { state: GameState }) {
   const rec = state.history[state.history.length - 1];
   const myPos = teamStandings(state, state.player.series).findIndex((t) => t.teamId === state.player.teamId) + 1;
   return (
-    <section className="mm-panel rounded-2xl p-6">
+    <section className="mm-panel flex min-h-0 flex-col justify-center overflow-hidden rounded-2xl p-6">
       <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-accent">Temporada {state.year} terminada</div>
       <h2 className="mt-1 text-3xl font-black">¡Campeones {state.year}!</h2>
       <p className="mt-1 text-sm text-muted">Tu equipo ha terminado {myPos}º en el campeonato de equipos.</p>

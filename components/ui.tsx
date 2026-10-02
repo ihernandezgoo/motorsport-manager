@@ -1,5 +1,5 @@
-import { Cloud, CloudLightning, CloudRain, CloudSun, CloudSunRain, Sun, type LucideIcon } from "lucide-react";
-import { useEffect, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { ChevronLeft, ChevronRight, Cloud, CloudLightning, CloudRain, CloudSun, CloudSunRain, Sun, type LucideIcon } from "lucide-react";
+import { useEffect, useState, type ButtonHTMLAttributes, type CSSProperties, type ReactNode } from "react";
 import { SERIES_COLOR, SERIES_SHORT } from "@/lib/game/data/teams";
 import { COMPOUND_INFO } from "@/lib/game/tyres";
 import type { Compound, SeriesId } from "@/lib/game/types";
@@ -36,6 +36,10 @@ export function textOn(hex: string) {
   return lum > 150 ? "#0b0d10" : "#fff";
 }
 
+/**
+ * Panel con cabecera. Con `fill` ocupa todo el alto disponible y su cuerpo se convierte en una
+ * columna flexible, de modo que una lista paginada dentro pueda medir el espacio que le queda.
+ */
 export function Panel({
   title,
   icon: Icon,
@@ -43,6 +47,7 @@ export function Panel({
   children,
   className,
   bodyClass,
+  fill,
 }: {
   title?: ReactNode;
   icon?: LucideIcon;
@@ -50,21 +55,161 @@ export function Panel({
   children: ReactNode;
   className?: string;
   bodyClass?: string;
+  fill?: boolean;
 }) {
   return (
-    <section className={cx("mm-panel rounded-xl", className)}>
+    <section className={cx("mm-panel rounded-xl", fill && "flex min-h-0 flex-col overflow-hidden", className)}>
       {(title || right) && (
-        <header className="flex items-center justify-between gap-3 border-b border-white/5 px-4 py-3">
-          <h3 className="flex items-center gap-2.5 text-sm font-black uppercase tracking-[0.08em] text-fg">
-            {Icon && <Icon className="h-5 w-5 text-[#7aa2ff]" strokeWidth={2.2} />}
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-white/5 px-4 py-2.5">
+          <h3 className="flex min-w-0 items-center gap-2.5 truncate text-sm font-black uppercase tracking-[0.08em] text-fg">
+            {Icon && <Icon className="h-5 w-5 shrink-0 text-[#7aa2ff]" strokeWidth={2.2} />}
             {title}
           </h3>
           {right}
         </header>
       )}
-      <div className={cx("p-4", bodyClass)}>{children}</div>
+      <div className={cx("p-4", fill && "flex min-h-0 flex-1 flex-col", bodyClass)}>{children}</div>
     </section>
   );
+}
+
+/* ───────────────────────── Paginación sin scroll ─────────────────────────
+ * El juego nunca hace scroll: las listas largas se dividen en páginas según el espacio real
+ * disponible. `useSize` mide un contenedor de alto fijo y `fitCount` calcula cuántas filas o
+ * columnas de tamaño conocido caben en él.
+ */
+
+/** Mide un elemento con ResizeObserver. Se usa como `ref={ref}`. */
+export function useSize<T extends HTMLElement = HTMLElement>() {
+  const [el, setEl] = useState<T | null>(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setSize({ w: e.contentRect.width, h: e.contentRect.height }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [el]);
+  return [setEl, size] as const;
+}
+
+/** Cuántos elementos de tamaño `item` (más `gap` entre ellos) caben en `space`, descontando `reserved`. */
+export function fitCount(space: number, item: number, gap = 0, reserved = 0) {
+  return Math.max(1, Math.floor((space - reserved + gap) / (item + gap)));
+}
+
+export interface PagerState {
+  page: number;
+  pages: number;
+  start: number;
+  end: number;
+  setPage: (p: number) => void;
+}
+
+/**
+ * Página actual de una lista de `total` elementos con `per` por página. Si cambia el tamaño de
+ * página (al redimensionar la ventana) vuelve a la página que contiene `focus`.
+ */
+export function usePager(total: number, per: number, focus?: number): PagerState {
+  const pages = Math.max(1, Math.ceil(total / per));
+  const [sel, setSel] = useState<{ per: number; page: number } | null>(null);
+  const wanted = sel && sel.per === per ? sel.page : focus !== undefined && focus >= 0 ? Math.floor(focus / per) : 0;
+  const page = Math.max(0, Math.min(pages - 1, wanted));
+  return {
+    page,
+    pages,
+    start: page * per,
+    end: Math.min(total, page * per + per),
+    setPage: (p) => setSel({ per, page: Math.max(0, Math.min(pages - 1, p)) }),
+  };
+}
+
+/** Controles ◀ 2/5 ▶. No muestra nada si todo cabe en una página. */
+export function Pager({ pager, label, className, dark }: { pager: PagerState; label?: string; className?: string; dark?: boolean }) {
+  if (pager.pages <= 1) return null;
+  const btn = cx(
+    "grid h-7 w-7 place-items-center rounded-md border disabled:cursor-not-allowed disabled:opacity-30",
+    dark ? "border-white/10 bg-white/5 hover:bg-white/15" : "border-line-2 bg-panel-3 hover:bg-line-2",
+  );
+  return (
+    <div className={cx("flex shrink-0 items-center gap-1.5 text-xs font-semibold", className)}>
+      <button type="button" className={btn} disabled={pager.page === 0} onClick={() => pager.setPage(pager.page - 1)} aria-label="Página anterior">
+        <ChevronLeft className="h-4 w-4" />
+      </button>
+      <span className="min-w-12 text-center tabular text-muted">
+        {label ? `${label} ` : ""}
+        {pager.page + 1}/{pager.pages}
+      </span>
+      <button type="button" className={btn} disabled={pager.page >= pager.pages - 1} onClick={() => pager.setPage(pager.page + 1)} aria-label="Página siguiente">
+        <ChevronRight className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Rejilla paginada que llena el alto disponible: calcula columnas y filas a partir del tamaño
+ * mínimo de cada tarjeta y estira las celdas para ocupar todo el espacio.
+ */
+export function PagedGrid<T>({
+  items,
+  minW,
+  minH,
+  maxCols,
+  gap = 12,
+  keyOf,
+  render,
+  focus,
+  header,
+  className,
+}: {
+  items: T[];
+  minW: number;
+  minH: number;
+  maxCols?: number;
+  gap?: number;
+  keyOf: (item: T) => string;
+  render: (item: T, index: number) => ReactNode;
+  focus?: number;
+  header?: ReactNode;
+  className?: string;
+}) {
+  const [ref, size] = useSize();
+  const cols = Math.min(maxCols ?? Infinity, fitCount(size.w, minW, gap));
+  const rows = fitCount(size.h, minH, gap);
+  const pager = usePager(items.length, cols * rows, focus);
+  const style: CSSProperties = {
+    gap,
+    gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+    gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
+  };
+  return (
+    <div className={cx("flex min-h-0 flex-1 flex-col gap-3", className)}>
+      <div className="flex min-h-7 shrink-0 items-center justify-between gap-3">
+        <div className="min-w-0">{header}</div>
+        <Pager pager={pager} />
+      </div>
+      <div ref={ref} className="min-h-0 flex-1 overflow-hidden">
+        <div className="grid h-full" style={style}>
+          {items.slice(pager.start, pager.end).map((it, i) => (
+            <div key={keyOf(it)} className="min-h-0 min-w-0">
+              {render(it, pager.start + i)}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Lista o tabla paginada por filas de alto fijo. `children` recibe el rango visible;
+ * el contenedor medido debe tener alto definido (flex-1 dentro de una columna).
+ */
+export function useRowPager(total: number, rowH: number, headH = 0, focus?: number) {
+  const [ref, size] = useSize();
+  const per = fitCount(size.h, rowH, 0, headH);
+  const pager = usePager(total, per, focus);
+  return { ref, pager };
 }
 
 type BtnVariant = "primary" | "ghost" | "subtle" | "danger" | "good";
@@ -124,6 +269,37 @@ export function SeriesBadge({ s, className }: { s: SeriesId; className?: string 
     <span className={cx("inline-block rounded px-1.5 py-0.5 text-[10px] font-black leading-none text-white", className)} style={{ background: SERIES_COLOR[s] }}>
       {SERIES_SHORT[s]}
     </span>
+  );
+}
+
+/** Ruta del logo de cada categoría dentro de `public/`. Si falta el archivo se muestra el texto. */
+export const SERIES_LOGO: Record<SeriesId, string> = {
+  f1: "/logos/f1.svg",
+  f2: "/logos/f2.svg",
+  f3: "/logos/f3.svg",
+};
+
+export function SeriesLogo({ s, className, textClass }: { s: SeriesId; className?: string; textClass?: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <span className={cx("font-black italic", textClass)} style={{ color: SERIES_COLOR[s] }}>
+        {SERIES_SHORT[s]}
+      </span>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={SERIES_LOGO[s]}
+      alt={SERIES_SHORT[s]}
+      className={cx("w-auto object-contain object-left", className)}
+      onError={() => setFailed(true)}
+      // El error puede ocurrir antes de hidratar, cuando `onError` aún no está enganchado.
+      ref={(img) => {
+        if (img?.complete && img.naturalWidth === 0) setFailed(true);
+      }}
+    />
   );
 }
 
@@ -191,7 +367,24 @@ export function Segmented<T extends string | number>({
   );
 }
 
-export function Modal({ open, onClose, title, children, wide }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; wide?: boolean }) {
+/** Con `tall` el modal ocupa casi toda la ventana y su cuerpo es una columna flexible (para listas paginadas). */
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  wide,
+  tall,
+  right,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: ReactNode;
+  children: ReactNode;
+  wide?: boolean;
+  tall?: boolean;
+  right?: ReactNode;
+}) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -202,20 +395,27 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
   }, [open, onClose]);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-black/70 p-4 backdrop-blur-sm" onClick={onClose}>
       <div
-        className={cx("my-8 w-full rounded-2xl border border-line-2 bg-panel shadow-2xl", wide ? "max-w-5xl" : "max-w-2xl")}
+        className={cx(
+          "flex max-h-full w-full flex-col overflow-hidden rounded-2xl border border-line-2 bg-panel shadow-2xl",
+          wide ? "max-w-5xl" : "max-w-2xl",
+          tall && "h-full max-h-[900px]",
+        )}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
       >
-        <header className="flex items-center justify-between border-b border-line px-5 py-3">
-          <h2 className="text-base font-bold">{title}</h2>
-          <button type="button" onClick={onClose} className="rounded-md px-2 py-1 text-muted hover:bg-panel-3 hover:text-fg" aria-label="Cerrar">
-            ✕
-          </button>
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-5 py-3">
+          <h2 className="truncate text-base font-bold">{title}</h2>
+          <div className="flex items-center gap-2">
+            {right}
+            <button type="button" onClick={onClose} className="rounded-md px-2 py-1 text-muted hover:bg-panel-3 hover:text-fg" aria-label="Cerrar">
+              ✕
+            </button>
+          </div>
         </header>
-        <div className="p-5">{children}</div>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-5">{children}</div>
       </div>
     </div>
   );

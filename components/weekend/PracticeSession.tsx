@@ -48,15 +48,18 @@ export function PracticeSession({ state, ws }: { state: GameState; ws: WeekendSt
   const finish = () => updateWeekend((w, d) => skipPractice(d, w));
 
   return (
-    <div className="space-y-4">
-      <Panel title="Entrenamientos libres · Reglajes">
-        <p className="text-sm text-muted">
-          Ajusta el coche y sal a pista. Tras cada tanda el piloto te dirá qué cambiaría. Un buen reglaje da confianza y
-          mejora el ritmo a una vuelta y en carrera (hasta medio segundo). Los pilotos con buen <i>feedback</i> técnico dan
-          indicaciones más precisas. Dispones de <b className="text-fg">{totalRuns} tandas</b> por piloto.
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <div className="mm-panel flex shrink-0 items-center gap-4 rounded-xl px-4 py-2.5">
+        <p className="min-w-0 flex-1 text-xs leading-snug text-muted">
+          <b className="text-fg">Entrenamientos libres · Reglajes.</b> Ajusta el coche y sal a pista: tras cada tanda el piloto te dirá qué cambiaría. Un buen
+          reglaje mejora el ritmo hasta medio segundo; los pilotos con buen <i>feedback</i> dan indicaciones más precisas. Tienes{" "}
+          <b className="text-fg">{totalRuns} tandas</b> por piloto.
         </p>
-      </Panel>
-      <div className={cx("grid gap-4", drivers.length > 2 ? "xl:grid-cols-3" : "lg:grid-cols-2")}>
+        <Btn variant="primary" onClick={finish}>
+          Terminar libres →
+        </Btn>
+      </div>
+      <div className={cx("grid min-h-0 flex-1 gap-4", drivers.length > 2 ? "lg:grid-cols-3" : "lg:grid-cols-2")}>
         {drivers.map((d) => {
           const st = ws.setup[d.id];
           if (!st) return null;
@@ -65,6 +68,8 @@ export function PracticeSession({ state, ws }: { state: GameState; ws: WeekendSt
           return (
             <Panel
               key={d.id}
+              fill
+              className="h-full"
               title={
                 <span className="flex items-center gap-2 normal-case tracking-normal">
                   <Stripe color={team.color} className="h-4" />
@@ -75,45 +80,49 @@ export function PracticeSession({ state, ws }: { state: GameState; ws: WeekendSt
               }
               right={<span className="text-xs text-muted">Tandas: {st.runsLeft}/{totalRuns}</span>}
             >
-              <div className="space-y-4">
+              <div className="flex min-h-0 flex-1 flex-col gap-3">
                 {SETUP_PARAMS.map((p) => (
-                  <div key={p.key}>
-                    <div className="mb-1 flex justify-between text-xs">
+                  <div key={p.key} className="shrink-0">
+                    <div className="flex justify-between text-xs">
                       <span className="font-semibold">{p.label}</span>
                       <span className="tabular text-muted">{v[p.key]}</span>
                     </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={v[p.key]}
-                      disabled={st.runsLeft <= 0}
-                      onChange={(e) => setVals((all) => ({ ...all, [d.id]: { ...all[d.id], [p.key]: Number(e.target.value) } }))}
-                      className="w-full"
-                    />
-                    <div className="flex justify-between text-[10px] text-dim">
-                      <span>{p.low}</span>
-                      <span>{p.high}</span>
+                    <div className="flex items-center gap-2 text-[10px] text-dim">
+                      <span className="w-16 truncate" title={p.low}>
+                        {p.low}
+                      </span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={v[p.key]}
+                        disabled={st.runsLeft <= 0}
+                        onChange={(e) => setVals((all) => ({ ...all, [d.id]: { ...all[d.id], [p.key]: Number(e.target.value) } }))}
+                        className="min-w-0 flex-1"
+                      />
+                      <span className="w-16 truncate text-right" title={p.high}>
+                        {p.high}
+                      </span>
                     </div>
                   </div>
                 ))}
-                <div>
+                <div className="shrink-0">
                   <div className="mb-1 flex justify-between text-xs">
-                    <span className="font-semibold">Confianza del piloto (mejor reglaje)</span>
+                    <span className="truncate font-semibold">Confianza del piloto (mejor reglaje)</span>
                     <span className="font-bold tabular">{Math.round(st.quality * 100)}%</span>
                   </div>
                   <Meter value={st.quality * 100} color={st.quality > 0.85 ? "#22c55e" : st.quality > 0.7 ? "#f59e0b" : "#ef4444"} height={8} />
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <Btn variant="primary" disabled={st.runsLeft <= 0} onClick={() => runLap(d.id)}>
+                <div className="flex shrink-0 gap-2">
+                  <Btn variant="primary" className="flex-1" disabled={st.runsLeft <= 0} onClick={() => runLap(d.id)}>
                     Salir a pista
                   </Btn>
-                  <Btn disabled={st.runsLeft <= 0} onClick={() => engineer(d.id)} title="Tu ingeniero propone un reglaje según los datos del equipo">
-                    Propuesta del ingeniero
+                  <Btn className="flex-1" disabled={st.runsLeft <= 0} onClick={() => engineer(d.id)} title="Tu ingeniero propone un reglaje según los datos del equipo">
+                    Propuesta ingeniero
                   </Btn>
                 </div>
                 {last && (
-                  <div className="rounded-lg border border-line bg-panel-2 p-3">
+                  <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-line bg-panel-2 p-3">
                     <div className="flex items-baseline justify-between">
                       <span className="text-xs text-muted">Última tanda</span>
                       <span className="font-mono text-sm font-bold">{formatLap(last.time)}</span>
@@ -128,7 +137,7 @@ export function PracticeSession({ state, ws }: { state: GameState; ws: WeekendSt
                   </div>
                 )}
                 {st.runs.length > 1 && (
-                  <div className="text-[11px] text-dim">
+                  <div className="shrink-0 truncate text-[11px] text-dim" title={st.runs.map((r) => formatLap(r.time)).join(" · ")}>
                     Tiempos: {st.runs.map((r) => formatLap(r.time)).join(" · ")}
                   </div>
                 )}
@@ -136,11 +145,6 @@ export function PracticeSession({ state, ws }: { state: GameState; ws: WeekendSt
             </Panel>
           );
         })}
-      </div>
-      <div className="flex justify-end">
-        <Btn variant="primary" size="lg" onClick={finish}>
-          Terminar libres →
-        </Btn>
       </div>
     </div>
   );

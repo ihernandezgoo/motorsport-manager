@@ -37,8 +37,12 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* El juego nunca hace scroll: cada pantalla ocupa exactamente la ventana y lo que no cabe se pagina. */
 html,
 body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
   background: var(--bg);
   color: var(--text);
 }

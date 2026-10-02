@@ -1,11 +1,13 @@
+import { useState } from "react";
 import { helmetOf } from "@/lib/game/data/liveries";
 import { teamDrivers, teamOverall } from "@/lib/game/format";
 import { driverOverall, engineRating, reliabilityRating } from "@/lib/game/perf";
 import type { Driver, GameState } from "@/lib/game/types";
 import { DriverPortrait, TeamCar } from "../art/Photos";
-import { Nat, Panel, RatingBar } from "../ui";
+import { cx, Nat, Panel, RatingBar, Tabs } from "../ui";
 
 export function TeamView({ state }: { state: GameState }) {
+  const [tab, setTab] = useState<"car" | "drivers">("car");
   const team = state.teams[state.player.teamId];
   const series = team.series;
   const rivals = Object.values(state.teams).filter((t) => t.series === series);
@@ -22,21 +24,36 @@ export function TeamView({ state }: { state: GameState }) {
   const min = Math.min(...ranking.map((r) => r.s)) - 3;
   const max = ranking[0].s;
   const pu = team.pu ? state.pus[team.pu] : null;
+  const drivers = teamDrivers(state, team.id);
 
   return (
-    <div className="mx-auto max-w-7xl space-y-4">
-      <div className="carbon relative overflow-hidden rounded-2xl border border-line px-6 py-5">
+    <div className="mx-auto flex h-full w-full max-w-7xl min-h-0 flex-col gap-3">
+      <div className="carbon relative flex h-32 shrink-0 items-center gap-6 overflow-hidden rounded-2xl border border-line px-6">
         <div className="absolute inset-y-0 left-0 w-2" style={{ background: team.color }} />
-        <div className="flex flex-wrap items-center gap-6">
-          <div className="min-w-0">
-            <div className="text-xs uppercase tracking-[0.2em] text-muted">{state.year} · {series.toUpperCase()}</div>
-            <h1 className="text-3xl font-black">{team.name}</h1>
-            <div className="text-sm text-muted">{pu ? `Motor ${pu.name}` : "Dallara · Mecachrome"}</div>
-          </div>
-          <TeamCar team={team} series={series} number={teamDrivers(state, team.id)[0]?.number} helmet={helmetOf(teamDrivers(state, team.id)[0] ?? { id: "x", nat: "GBR" }).base} className="ml-auto h-36 w-full max-w-2xl" />
+        <div className="min-w-0">
+          <div className="text-xs uppercase tracking-[0.2em] text-muted">{state.year} · {series.toUpperCase()}</div>
+          <h1 className="truncate text-3xl font-black">{team.name}</h1>
+          <div className="text-sm text-muted">{pu ? `Motor ${pu.name}` : "Dallara · Mecachrome"}</div>
         </div>
+        <Tabs
+          className="shrink-0"
+          value={tab}
+          onChange={setTab}
+          tabs={[
+            { id: "car", label: "Coche" },
+            { id: "drivers", label: "Pilotos" },
+          ]}
+        />
+        <TeamCar team={team} series={series} number={drivers[0]?.number} helmet={helmetOf(drivers[0] ?? { id: "x", nat: "GBR" }).base} className="ml-auto hidden h-28 w-full max-w-xl md:block" />
       </div>
-      <div className="grid gap-4 lg:grid-cols-3">
+      {tab === "drivers" ? (
+        <div className={cx("grid min-h-0 flex-1 gap-4", drivers.length > 2 ? "lg:grid-cols-3" : "lg:grid-cols-2")}>
+          {drivers.map((d) => (
+            <DriverCard key={d.id} d={d} color={team.color} narrow={drivers.length > 2} />
+          ))}
+        </div>
+      ) : (
+      <div className="grid min-h-0 flex-1 content-start gap-4 lg:grid-cols-3">
         <Panel title="Coche">
           <div className="space-y-3">
             <RatingBar label={series === "f1" ? "Aerodinámica" : "Ingeniería aerodinámica"} value={team.car.aero} compare={best.aero} />
@@ -74,20 +91,16 @@ export function TeamView({ state }: { state: GameState }) {
           </ul>
         </Panel>
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        {teamDrivers(state, team.id).map((d) => (
-          <DriverCard key={d.id} d={d} color={team.color} />
-        ))}
-      </div>
+      )}
     </div>
   );
 }
 
-function DriverCard({ d, color }: { d: Driver; color: string }) {
+function DriverCard({ d, color, narrow }: { d: Driver; color: string; narrow?: boolean }) {
   return (
-    <section className="flex overflow-hidden rounded-xl border border-line bg-panel">
-      <DriverPortrait driver={d} color={color} kind="full" rounded="" className="w-36 shrink-0 sm:w-44" />
-      <div className="min-w-0 flex-1 p-4">
+    <section className={cx("flex min-h-0 overflow-hidden rounded-xl border border-line bg-panel", narrow && "flex-col")}>
+      <DriverPortrait driver={d} color={color} kind="full" rounded="" className={narrow ? "min-h-0 w-full flex-1" : "w-36 shrink-0 sm:w-44"} />
+      <div className={cx("min-w-0 p-4", narrow ? "shrink-0" : "flex-1")}>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-xs text-muted">

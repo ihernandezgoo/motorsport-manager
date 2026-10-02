@@ -29,8 +29,8 @@ export function Shell({ state, view, onView, onMenu, children }: { state: GameSt
   const current = NAV.find((n) => n.id === view) ?? NAV[0];
 
   return (
-    <div className="flex min-h-screen flex-col pb-24">
-      <header className="sticky top-0 z-30 border-b border-white/5 bg-bg/85 backdrop-blur">
+    <div className="flex h-dvh flex-col overflow-hidden">
+      <header className="relative z-30 shrink-0 border-b border-white/5 bg-bg/85 backdrop-blur">
         <div className="flex items-center gap-2 px-3 py-2.5 lg:px-6">
           <div className="relative">
             <TopBtn onClick={() => setSettings((s) => !s)} label="Menú">
@@ -103,10 +103,10 @@ export function Shell({ state, view, onView, onMenu, children }: { state: GameSt
         </div>
       </header>
 
-      <main className="min-w-0 flex-1 p-3 lg:p-6">{children}</main>
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-3 lg:px-6 lg:py-4">{children}</main>
 
-      <nav className="fixed inset-x-0 bottom-0 z-30 flex items-end justify-center gap-3 px-2 pb-2">
-        <div className="flex max-w-full items-stretch overflow-x-auto rounded-t-xl rounded-b-lg border border-white/10 bg-[#1b1e25]/95 shadow-[0_-8px_30px_rgba(0,0,0,.5)] backdrop-blur">
+      <nav className="z-30 flex shrink-0 items-end justify-center gap-3 px-2 pb-2">
+        <div className="flex max-w-full items-stretch overflow-hidden rounded-t-xl rounded-b-lg border border-white/10 bg-[#1b1e25]/95 shadow-[0_-8px_30px_rgba(0,0,0,.5)] backdrop-blur">
           {nav.map((n) => (
             <button
               type="button"
