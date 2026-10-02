@@ -1,26 +1,125 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #0b0d12;
+  --panel: #1a1d24;
+  --panel-2: #22262e;
+  --panel-3: #2c313b;
+  --line: #2c313b;
+  --line-2: #3b414d;
+  --muted: #9aa3b2;
+  --dim: #69717f;
+  --text: #f1f3f6;
+  --accent: #e10600;
+  --good: #22c55e;
+  --warn: #f59e0b;
+  --bad: #ef4444;
+  --purple: #b26bff;
+  color-scheme: dark;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-panel-3: var(--panel-3);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+  --color-muted: var(--muted);
+  --color-dim: var(--dim);
+  --color-fg: var(--text);
+  --color-accent: var(--accent);
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-purple: var(--purple);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  background:
+    radial-gradient(1200px 600px at 85% 10%, rgba(124, 58, 237, 0.12), transparent 60%),
+    radial-gradient(900px 500px at 10% 90%, rgba(37, 99, 235, 0.1), transparent 60%),
+    var(--bg);
+  background-attachment: fixed;
+}
+
+/* Panel con el acabado de las pantallas de gestión: degradado suave y borde claro. */
+.mm-panel {
+  background: linear-gradient(180deg, #20242c 0%, #181b21 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+input[type="range"] {
+  accent-color: var(--accent);
+}
+
+.rain-overlay {
+  background-image:
+    repeating-linear-gradient(105deg, rgba(200, 220, 255, 0.28) 0 1.5px, transparent 1.5px 13px),
+    repeating-linear-gradient(100deg, rgba(200, 220, 255, 0.14) 0 1px, transparent 1px 7px);
+  animation: rain-fall 0.45s linear infinite;
+}
+
+@keyframes rain-fall {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: -18px 60px;
+  }
+}
+
+.sc-stripes {
+  background: repeating-linear-gradient(-45deg, #facc15 0 12px, #1a1a1a 12px 24px);
+}
+
+.carbon {
+  background-color: var(--panel);
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.015) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.015) 75%),
+    linear-gradient(45deg, rgba(255, 255, 255, 0.015) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.015) 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 4px 4px;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.pulse {
+  animation: pulse-dot 1.2s ease-in-out infinite;
 }
