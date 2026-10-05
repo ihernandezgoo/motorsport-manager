@@ -14,6 +14,7 @@ import type {
   RaceKind,
   RaceResult,
   SeriesId,
+  StrategyPlan,
   Team,
   TyreSet,
   WeatherPlan,
@@ -143,6 +144,10 @@ export interface CarState {
   setLog: { id: string; wear: number }[];
   /** Multiplicador de desgaste por lo aprendido en las tandas largas. */
   wearMult: number;
+  /** Planes de estrategia del jugador, el activo y sus paradas pendientes. */
+  stratPlans?: StrategyPlan[];
+  stratActive?: number;
+  strategy?: PlannedStop[];
 }
 
 export type RaceEventType =
@@ -191,6 +196,8 @@ export interface RaceConfig {
   wearMult?: Record<string, number>;
   /** Multiplicador de la probabilidad de avería por piloto (componentes gastados). */
   relMult?: Record<string, number>;
+  /** Planes de estrategia de los pilotos del jugador. */
+  strategies?: Record<string, { plans: StrategyPlan[]; active: number }>;
   mustTwo: boolean;
   seed: number;
   weekendId: string;
@@ -334,6 +341,29 @@ export class RaceSim {
       this.log(0, 0, "sc", "Salida lanzada tras el coche de seguridad por la lluvia", []);
     }
     this.cars = cfg.grid.map((id, idx) => this.makeCar(id, idx));
+    for (const c of this.cars) {
+      const st = c.isPlayer ? cfg.strategies?.[c.driverId] : undefined;
+      if (st) this.setPlans(c.driverId, st.plans, st.active, 1);
+    }
+  }
+
+  /**
+   * Planes de estrategia de un piloto del jugador. Las paradas del plan activo a partir de la vuelta
+   * `fromLap` (incluida) quedan pendientes y se ejecutan solas mientras el coche no esté en manos de la IA.
+   */
+  setPlans(id: string, plans: StrategyPlan[], active: number, fromLap: number) {
+    const car = this.car(id);
+    car.stratPlans = structuredClone(plans);
+    car.stratActive = Math.max(0, Math.min(plans.length - 1, active));
+    car.strategy = (plans[car.stratActive]?.stops ?? []).filter((s) => s.lap >= fromLap).map((s) => ({ ...s }));
+  }
+
+  /** Pide la siguiente parada del plan cuando llega su vuelta (nunca slicks con la pista mojada). */
+  private followStrategy(car: CarState, L: number) {
+    const next = car.strategy?.[0];
+    if (!next || car.pitRequest || L >= this.totalLaps || L < next.lap) return;
+    if (!isWetTyre(next.compound) && this.wet > 0.18) return;
+    car.pitRequest = next.compound;
   }
 
   // ───────────────────────────── preparación ─────────────────────────────
@@ -973,7 +1003,10 @@ export class RaceSim {
     // Decisiones.
     order.forEach((car, idx) => {
       if (car.auto) this.aiDecide(car, L, order, idx);
-      else if (this.hasErs && car.ers === 2 && car.battery < 8) car.ers = 1;
+      else {
+        if (this.hasErs && car.ers === 2 && car.battery < 8) car.ers = 1;
+        this.followStrategy(car, L);
+      }
       if (L === N) car.pitRequest = null;
     });
 
@@ -1249,6 +1282,8 @@ export class RaceSim {
         else if (!car.usedDry.includes(fresh.compound)) car.usedDry.push(fresh.compound);
         car.pitRequest = null;
         if (car.auto && !isWetTyre(fresh.compound)) car.plan = car.plan.filter((s) => s.lap > L);
+        // Una parada cercana del plan se da por hecha (también si se adelantó a mano).
+        if (car.strategy?.length && car.strategy[0].lap <= L + 8) car.strategy.shift();
         if (this.localRng("release", car.driverId, L)() < 0.004) {
           car.penalty += 5;
           this.log(t + pit.tout, L, "penalty", `${car.code}: 5 s de penalización por salida insegura de boxes`, [car.driverId]);

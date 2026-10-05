@@ -230,6 +230,21 @@ export interface LongRunData {
   wearPerLap: number;
 }
 
+/** Plan de estrategia: compuesto de salida y paradas (al final de la vuelta `lap`). */
+export interface StrategyPlan {
+  name: string;
+  start: Compound;
+  stops: { lap: number; compound: Compound }[];
+}
+
+/** Planes de un piloto para una carrera y el que está activo. */
+export interface DriverStrategies {
+  plans: StrategyPlan[];
+  active: number;
+  /** Juego de salida elegido (si no, el menos gastado del compuesto de salida). */
+  startSetId?: string;
+}
+
 export interface WeekendState {
   weekendIndex: number;
   series: SeriesId;
@@ -249,6 +264,8 @@ export interface WeekendState {
   longRuns: Record<string, LongRunData[]>;
   /** Puestos de sanción en la parrilla del Gran Premio (por cambiar componentes, etc.). */
   gridPenalty: Record<string, { places: number; reason: string }>;
+  /** Estrategias preparadas por carrera (clave de sesión) y piloto. */
+  strategies?: Record<string, Record<string, DriverStrategies>>;
 }
 
 export type ProjectArea = "aero" | "chassis" | "engine" | "reliability";

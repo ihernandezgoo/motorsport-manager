@@ -104,6 +104,7 @@ export function DriverPanel({
   followed,
   onFollow,
   onCycle,
+  onStrategy,
 }: {
   p: LivePlayer;
   snap: LiveSnapshot;
@@ -111,6 +112,7 @@ export function DriverPanel({
   followed: boolean;
   onFollow: () => void;
   onCycle?: () => void;
+  onStrategy?: () => void;
 }) {
   const [pop, setPop] = useState<null | "pit" | "engine" | "ers">(null);
   const circuit = CIRCUITS[snap.circuitId];
@@ -260,6 +262,25 @@ export function DriverPanel({
         </Popover>
       )}
 
+      {onStrategy && p.plans.length > 0 && !locked && (
+        <button
+          type="button"
+          onClick={onStrategy}
+          className="mb-1 flex w-full items-center gap-2 rounded-lg border border-white/10 bg-[#15181e]/90 px-3 py-1 text-left text-[11px] text-white/80 backdrop-blur hover:bg-[#262a33]"
+          title="Ver y cambiar la estrategia"
+        >
+          <span className="rounded bg-white px-1.5 font-black text-black">{p.plans[p.activePlan]?.name}</span>
+          <span className="font-bold uppercase tracking-wider">Estrategia</span>
+          <span className="truncate">
+            {p.auto
+              ? "La IA decide las paradas"
+              : p.pendingStops[0]
+                ? `Próxima parada: V${p.pendingStops[0].lap} → ${COMPOUND_INFO[p.pendingStops[0].compound].name}`
+                : "Sin más paradas previstas"}
+          </span>
+          <span className="ml-auto text-white/50">Editar ›</span>
+        </button>
+      )}
       <div className="flex h-9 items-center gap-2 rounded-t-xl border border-b-0 border-white/10 bg-[#15181e]/90 px-3 text-[11px] font-bold uppercase tracking-wider text-white/60 backdrop-blur">
         <span className="italic">Detrás</span>
         <NumBox n={p.behind} />

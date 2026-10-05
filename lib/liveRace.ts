@@ -3,7 +3,7 @@ import { helmetOf } from "./game/data/liveries";
 import { RaceSim, type LapStatus, type RaceConfig, type RaceEvent, type TeamOrder } from "./game/race";
 import { scoreResult } from "./game/season";
 import type { Plan } from "./game/strategy";
-import type { Compound, DrivingStyle, EngineMode, ErsMode, RaceKind, RaceResult, SeriesId } from "./game/types";
+import type { Compound, DrivingStyle, EngineMode, ErsMode, RaceKind, RaceResult, SeriesId, StrategyPlan } from "./game/types";
 import { rainAt } from "./game/weather";
 
 export interface LiveTowerRow {
@@ -100,6 +100,10 @@ export interface LivePlayer {
   radio: string | null;
   /** Juegos de repuesto que quedan (null si no se lleva la cuenta). */
   spareSets: { compound: Compound; wear: number }[] | null;
+  /** Planes de estrategia, el activo y sus paradas pendientes. */
+  plans: StrategyPlan[];
+  activePlan: number;
+  pendingStops: { lap: number; compound: Compound }[];
 }
 
 export interface LiveSnapshot {
@@ -136,6 +140,8 @@ export interface LiveSnapshot {
   teamOrder: TeamOrder;
   /** Repetición de un momento de la carrera ya terminada. */
   replaying: boolean;
+  /** Obligación de usar dos compuestos de seco. */
+  mustTwo: boolean;
   /** Momentos clave de la carrera (solo al terminar). */
   highlights: RaceEvent[];
 }
@@ -298,12 +304,38 @@ class LiveRaceStore {
     this.emit();
   }
 
+  /** Vuelta en curso de un coche del jugador (1..N) en el reloj actual. */
+  currentLap(id: string): number {
+    const sim = this.sim;
+    const car = sim?.cars.find((x) => x.driverId === id);
+    if (!sim || !car) return 1;
+    return Math.min(sim.totalLaps, sim.completedAt(car, this.clock).k + 1);
+  }
+
+  /**
+   * Cambia los planes de estrategia (o el activo) de un piloto en plena carrera. Como las vueltas
+   * se calculan por adelantado, se rebobina a la primera vuelta en que el cambio aún puede aplicarse.
+   */
+  setPlans(id: string, plans: StrategyPlan[], active: number) {
+    const sim = this.sim;
+    if (!sim || this.replaying || sim.done) return;
+    const car = sim.cars.find((x) => x.driverId === id);
+    if (!car) return;
+    const current = sim.completedAt(car, this.clock).k + 1;
+    const target = car.status === "run" ? sim.pitThisLap(id, this.clock) ?? current + 1 : current;
+    if (target < sim.totalLaps && sim.lap >= target) this.rewind(target);
+    sim.setPlans(id, plans, active, target);
+    this.ensureComputed();
+    this.skipPastEvents();
+    this.emit();
+  }
+
   /** Vuelve al inicio de la vuelta `lap` conservando las órdenes actuales del jugador. */
   private rewind(lap: number) {
     const sim = this.sim;
     if (!sim) return;
     const mine = sim.cars.filter((c) => c.isPlayer);
-    const keep = mine.map((c) => ({ id: c.driverId, style: c.style, engine: c.engine, ers: c.ers, auto: c.auto, pit: c.pitRequest }));
+    const keep = mine.map((c) => ({ id: c.driverId, style: c.style, engine: c.engine, ers: c.ers, auto: c.auto, pit: c.pitRequest, plans: c.stratPlans, active: c.stratActive ?? 0 }));
     const orders = [...sim.teamOrders];
     if (!sim.rewindToLap(lap)) return;
     for (const k of keep) {
@@ -313,6 +345,7 @@ class LiveRaceStore {
       // Activar la IA recalcula la estrategia (consume azar): solo si el modo cambió de verdad.
       if (sim.cars.find((c) => c.driverId === k.id)?.auto !== k.auto) sim.setAuto(k.id, k.auto);
       sim.requestPit(k.id, k.pit);
+      if (k.plans) sim.setPlans(k.id, k.plans, k.active, lap);
     }
     sim.teamOrders.clear();
     for (const [team, o] of orders) sim.teamOrders.set(team, o);
@@ -548,6 +581,9 @@ class LiveRaceStore {
           needsOther: sim.cfg.mustTwo && !c.usedWet && new Set(c.usedDry).size < 2,
           radio: lastRadio(c.driverId),
           spareSets: c.sets ? c.sets.map((s) => ({ compound: s.compound, wear: s.wear })) : null,
+          plans: c.stratPlans ?? [],
+          activePlan: c.stratActive ?? 0,
+          pendingStops: c.strategy ?? [],
         };
       });
     const events = sim.events
@@ -596,6 +632,7 @@ class LiveRaceStore {
       })(),
       teamOrder: sim.teamOrders.get(sim.cars.find((c) => c.isPlayer)?.teamId ?? "") ?? "free",
       replaying: this.replaying,
+      mustTwo: sim.cfg.mustTwo,
       highlights: sim.done && (this.finished || this.replaying) ? this.highlights(sim) : [],
     };
   }

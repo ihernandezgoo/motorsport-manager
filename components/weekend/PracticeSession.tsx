@@ -7,7 +7,8 @@ import { gauss, rngFor } from "@/lib/game/rng";
 import { autoSetupValues, driverFeedback, practiceLap, SETUP_PARAMS, setupQuality } from "@/lib/game/setup";
 import { effectiveTeam } from "@/lib/game/staff";
 import { wearRate } from "@/lib/game/strategy";
-import { runOnSet, setLabel } from "@/lib/game/tyreSets";
+import { runOnSet } from "@/lib/game/tyreSets";
+import { TyreModal, TyreTile } from "./TyrePicker";
 import { availableCompounds, COMPOUND_INFO, isWetTyre } from "@/lib/game/tyres";
 import type { Compound, GameState, SessionDef, SetupValues, WeekendState } from "@/lib/game/types";
 import { wetnessAt } from "@/lib/game/weather";
@@ -90,6 +91,7 @@ export function PracticeSession({ state, ws, session }: { state: GameState; ws: 
         {drivers.map((d) => (
           <DriverPractice
             key={d.id}
+            state={state}
             ws={ws}
             id={d.id}
             title={`#${d.number} ${d.first} ${d.last}`}
@@ -108,6 +110,7 @@ export function PracticeSession({ state, ws, session }: { state: GameState; ws: 
 }
 
 function DriverPractice({
+  state,
   ws,
   id,
   title,
@@ -119,6 +122,7 @@ function DriverPractice({
   onRun,
   onEngineer,
 }: {
+  state: GameState;
   ws: WeekendState;
   id: string;
   title: string;
@@ -136,6 +140,8 @@ function DriverPractice({
   const defaultSet = [...sets].sort((a, b) => compounds.indexOf(b.compound) - compounds.indexOf(a.compound) || b.wear - a.wear).find((s) => !isWetTyre(s.compound)) ?? sets[0];
   const [program, setProgram] = useState<Program>("setup");
   const [setId, setSetId] = useState(defaultSet?.id ?? "");
+  const [picker, setPicker] = useState(false);
+  const wetNow = wetnessAt(ws.weather[ws.sessions[ws.step]?.key] ?? Object.values(ws.weather)[0], 0.5);
   const chosen = sets.find((s) => s.id === setId) ?? defaultSet;
   if (!st) return null;
   const last = st.runs[st.runs.length - 1];
@@ -187,13 +193,12 @@ function DriverPractice({
               { value: "long", label: "Tanda larga · 10 v" },
             ]}
           />
-          <select value={chosen?.id ?? ""} onChange={(e) => setSetId(e.target.value)} className="min-w-0 flex-1 rounded border border-line-2 bg-panel-2 px-1 py-0.5 text-[11px]">
-            {sets.map((s) => (
-              <option key={s.id} value={s.id}>
-                {setLabel(s)}
-              </option>
-            ))}
-          </select>
+          <span className="ml-auto flex items-center gap-2 text-[11px] text-muted">
+            {chosen && <TyreTile set={chosen} size="sm" />}
+            <Btn size="xs" onClick={() => setPicker(true)} disabled={sets.length === 0}>
+              Neumáticos
+            </Btn>
+          </span>
         </div>
         <div className="flex shrink-0 gap-2">
           <Btn variant="primary" className="flex-1" disabled={st.runsLeft <= 0 || !chosen} onClick={() => chosen && onRun(program, chosen.id)}>
@@ -217,6 +222,21 @@ function DriverPractice({
               ))}
             </ul>
           </div>
+        )}
+        {picker && (
+          <TyreModal
+            state={state}
+            ws={ws}
+            driverId={id}
+            title={`Neumáticos · ${title}`}
+            fittedId={chosen?.id}
+            wet={wetNow}
+            onClose={() => setPicker(false)}
+            onPick={(s) => {
+              setSetId(s.id);
+              setPicker(false);
+            }}
+          />
         )}
         {lr.length > 0 && (
           <div className="flex shrink-0 flex-wrap items-center gap-2 text-[11px] text-muted">

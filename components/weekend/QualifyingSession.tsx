@@ -6,7 +6,7 @@ import { teamDrivers } from "@/lib/game/format";
 import { formatLap } from "@/lib/game/perf";
 import { assembleQuali, forcedCompound, qualiSegments, RISK_LABELS, segmentTiming, type Risk } from "@/lib/game/qualifying";
 import { hashString } from "@/lib/game/rng";
-import { setLabel } from "@/lib/game/tyreSets";
+
 import { availableCompounds, COMPOUND_INFO, idealForWetness, isWetTyre } from "@/lib/game/tyres";
 import type { Compound, GameState, SessionDef, TyreSet, WeekendState } from "@/lib/game/types";
 import { describeWeather, wetnessLabel } from "@/lib/game/weather";
@@ -14,6 +14,7 @@ import { advanceStep, qualiContext, seriesDrivers } from "@/lib/game/weekend";
 import { liveQuali, QUALI_SPEEDS, useLiveQuali, type QualiPlayer, type QualiSnapshot } from "@/lib/liveQuali";
 import { TrackView, type CameraMode } from "../race/TrackView";
 import { Btn, cx, Meter, Panel, Segmented, Stripe, Tyre, WeatherIcon } from "../ui";
+import { TyreModal, TyreTile } from "./TyrePicker";
 
 const PHASE_LABEL = { garage: "En el garaje", out: "Vuelta de salida", push: "Vuelta lanzada", cool: "Vuelta de enfriamiento", in: "Vuelta de entrada" } as const;
 
@@ -234,6 +235,7 @@ function DriverQualiCard({ state, ws, session, snap, p }: { state: GameState; ws
   const [risk, setRisk] = useState<Risk>(1);
   const [laps, setLaps] = useState(ws.series === "f1" ? 1 : 3);
   const [msg, setMsg] = useState<string | null>(null);
+  const [picker, setPicker] = useState(false);
   const sets = p.sets.filter((s) => s.compound === compound && s.wear < 100);
   const garage = p.phase === "garage";
 
@@ -281,6 +283,13 @@ function DriverQualiCard({ state, ws, session, snap, p }: { state: GameState; ws
       ) : (
         <div className="space-y-1.5">
           <div className="flex flex-wrap items-center gap-2">
+            {(() => {
+              const shown = p.sets.find((s) => s.id === setId) ?? [...sets].sort((a, b) => a.wear - b.wear)[0];
+              return shown ? <TyreTile set={shown} size="sm" /> : null;
+            })()}
+            <Btn size="xs" onClick={() => setPicker(true)}>
+              Neumáticos
+            </Btn>
             <Segmented
               size="xs"
               value={compound}
@@ -301,14 +310,7 @@ function DriverQualiCard({ state, ws, session, snap, p }: { state: GameState; ws
                 disabled: countAll(c) === 0 || (!!forced && !isWetTyre(c) && c !== forced),
               }))}
             />
-            <select value={setId} onChange={(e) => setSetId(e.target.value)} className="min-w-0 flex-1 rounded border border-line-2 bg-panel-2 px-1 py-0.5 text-[11px]">
-              <option value="">El más nuevo</option>
-              {sets.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {setLabel(s)}
-                </option>
-              ))}
-            </select>
+
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Segmented size="xs" value={risk} onChange={setRisk} options={RISK_LABELS.map((l, i) => ({ value: i as Risk, label: l, activeColor: ["#2563eb", "#4b5563", "#dc2626"][i] }))} />
@@ -321,6 +323,24 @@ function DriverQualiCard({ state, ws, session, snap, p }: { state: GameState; ws
             {forced && <span className="text-[10px] text-warn">Obligatorio: {COMPOUND_INFO[forced].name}</span>}
             {msg && <span className="text-[10px] text-bad">{msg}</span>}
           </div>
+          {picker && (
+            <TyreModal
+              state={state}
+              ws={{ ...ws, tyres: { ...ws.tyres, [p.id]: p.sets } }}
+              driverId={p.id}
+              title={`Neumáticos · ${d.first} ${d.last} · ${snap.segName}`}
+              initialId={setId || undefined}
+              wet={snap.wet}
+              locked={(s) => (forced && !isWetTyre(s.compound) && s.compound !== forced ? `Normativa: compuesto ${COMPOUND_INFO[forced].name} obligatorio` : null)}
+              confirmLabel="Usar en la próxima salida"
+              onClose={() => setPicker(false)}
+              onPick={(s) => {
+                setCompound(s.compound);
+                setSetId(s.id);
+                setPicker(false);
+              }}
+            />
+          )}
         </div>
       )}
     </div>

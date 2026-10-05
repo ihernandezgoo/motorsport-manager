@@ -5,8 +5,11 @@ import { RaceSim, type RaceConfig } from "./race";
 import { hashString, range, rngFor } from "./rng";
 import { aiSetupQuality, autoSetupValues, makeOptimum, setupQuality } from "./setup";
 import { effectiveTeam, effectiveTeams } from "./staff";
-import { makeTyreSets } from "./tyreSets";
-import type { Circuit, Compound, Driver, GameState, RaceKind, RaceResult, SeriesId, SessionDef, SessionKind, TyreSet, Weekend, WeekendState } from "./types";
+import { basePct, baseLap } from "./perf";
+import type { StratCtx } from "./strategy";
+import { dryCompounds, isWetTyre, spec, wetPenalty } from "./tyres";
+import { makeTyreSets, usedSetPenalty } from "./tyreSets";
+import type { Circuit, Compound, Driver, GameState, RaceKind, RaceResult, SeriesId, SessionDef, SessionKind, StrategyPlan, TyreSet, Weekend, WeekendState } from "./types";
 import { generateWeather, type WeatherMode } from "./weather";
 
 export function seriesEntry(wk: Weekend, series: SeriesId) {
@@ -194,7 +197,12 @@ export function raceConfigFor(
   state: GameState,
   ws: WeekendState,
   key: string,
-  opts: { playerTeamId?: string; startCompounds?: Record<string, Compound>; startSets?: Record<string, TyreSet> } = {},
+  opts: {
+    playerTeamId?: string;
+    startCompounds?: Record<string, Compound>;
+    startSets?: Record<string, TyreSet>;
+    strategies?: Record<string, { plans: StrategyPlan[]; active: number }>;
+  } = {},
 ): RaceConfig {
   const wk = state.calendar[ws.weekendIndex];
   const circuit = CIRCUITS[wk.circuitId];
@@ -228,6 +236,7 @@ export function raceConfigFor(
     playerTeamId: opts.playerTeamId,
     startCompounds: opts.startCompounds,
     startSets: opts.startSets,
+    strategies: opts.strategies,
     spareSets: opts.playerTeamId ? spareSets : undefined,
     wearMult,
     relMult,
@@ -237,6 +246,38 @@ export function raceConfigFor(
     round: entry?.round ?? 0,
     poleId,
   };
+}
+
+/** Contexto del planificador de estrategias para un piloto en una carrera del fin de semana. */
+export function stratContext(state: GameState, ws: WeekendState, key: string, driverId: string, startWear = 0): StratCtx {
+  const circuit = CIRCUITS[state.calendar[ws.weekendIndex].circuitId];
+  const kind = (ws.sessions.find((s) => s.key === key)?.kind ?? "race") as RaceKind;
+  return {
+    series: ws.series,
+    circuit,
+    base: baseLap(ws.series, circuit),
+    laps: raceLaps(ws.series, circuit, kind),
+    dry: dryCompounds(ws.series, circuit),
+    mustTwo: mustTwoCompounds(ws.series, kind),
+    tyreSkill: state.drivers[driverId].tyre,
+    wearMult: wearMultFor(ws, driverId),
+    pitLoss: circuit.pitLoss,
+    startWear,
+  };
+}
+
+/**
+ * Tiempo estimado de una vuelta rápida con un juego concreto en unas condiciones dadas: coche,
+ * piloto, reglaje, compuesto, humedad y estado del juego.
+ */
+export function estimateLap(state: GameState, ws: WeekendState, driverId: string, set: Pick<TyreSet, "compound" | "wear" | "used">, wet: number): number {
+  const circuit = CIRCUITS[state.calendar[ws.weekendIndex].circuitId];
+  const d = state.drivers[driverId];
+  const team = effectiveTeam(state, state.teams[d.teamId]);
+  let pct = basePct(ws.series, team, d, state.pus, circuit, wet, ws.setup[driverId]?.quality ?? ws.aiSetup[driverId] ?? 0.8);
+  pct += isWetTyre(set.compound) ? 0 : spec(ws.series, set.compound).pace * 1.2;
+  pct += wetPenalty(set.compound, wet) + wet * 6 + usedSetPenalty(set);
+  return baseLap(ws.series, circuit) * (1 + pct / 100);
 }
 
 /** Simula un fin de semana completo de una categoría sin intervención del jugador. */

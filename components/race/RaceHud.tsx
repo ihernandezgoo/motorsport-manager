@@ -38,6 +38,7 @@ import { ResultsTable } from "../screens/Results";
 import { TrackMap } from "../TrackMap";
 import { cx, Pager, SeriesBadge, Tyre, useRowPager, WeatherIcon } from "../ui";
 import { DriverPanel } from "./DriverPanel";
+import { RaceStrategyModal } from "./RaceStrategyModal";
 import { FOLLOW_ZOOM, TrackView, type CameraMode } from "./TrackView";
 
 const SPEEDS = [1, 2, 5, 10, 25, 50, 100];
@@ -122,6 +123,7 @@ export function RaceHud({
   const [data, setData] = useState(false);
   const [menu, setMenu] = useState(false);
   const [slots, setSlots] = useState<number[]>([0, 1]);
+  const [stratFor, setStratFor] = useState<string | null>(null);
   const circuit = CIRCUITS[snap.circuitId];
   const followId = camera.kind === "follow" ? camera.id : null;
   const playerIds = snap.players.map((p) => p.id);
@@ -357,6 +359,7 @@ export function RaceHud({
               followed={followId === panelPlayers[0].id}
               onFollow={() => follow(panelPlayers[0].id)}
               onCycle={snap.players.length > 2 ? () => cycle(0) : undefined}
+              onStrategy={() => setStratFor(panelPlayers[0].id)}
             />
           )}
         </div>
@@ -434,12 +437,14 @@ export function RaceHud({
               followed={followId === panelPlayers[1].id}
               onFollow={() => follow(panelPlayers[1].id)}
               onCycle={snap.players.length > 2 ? () => cycle(1) : undefined}
+              onStrategy={() => setStratFor(panelPlayers[1].id)}
             />
           )}
         </div>
       </div>
 
       {data && <DataCentre snap={snap} state={state} onClose={() => setData(false)} />}
+      {stratFor && <RaceStrategyModal state={state} snap={snap} driverId={stratFor} onClose={() => setStratFor(null)} />}
 
       {snap.replaying && (
         <div className="absolute left-1/2 top-16 z-30 flex -translate-x-1/2 items-center gap-3 rounded-lg bg-black/85 px-4 py-2 text-sm text-white shadow-xl">
