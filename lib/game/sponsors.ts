@@ -100,6 +100,21 @@ export function signSponsor(state: GameState, id: string): string | null {
   return null;
 }
 
+/**
+ * Si un hueco sigue libre, el departamento comercial acaba cerrando por su cuenta la oferta
+ * equilibrada (probabilidad por fin de semana), para que el equipo no se quede sin ingresos.
+ */
+export function autoSignSponsors(state: GameState, rng: Rng) {
+  refreshSponsorOffers(state, rng);
+  for (const tier of emptySlots(state)) {
+    if (rng() > 0.3) continue;
+    const offers = state.sponsorOffers.filter((o) => o.tier === tier);
+    const pickO = offers[1] ?? offers[0];
+    if (!pickO) continue;
+    signSponsor(state, pickO.id);
+  }
+}
+
 /** Rompe un acuerdo: el patrocinador se va sin más pagos, pero la junta lo nota. */
 export function dropSponsor(state: GameState, id: string) {
   const s = state.sponsors.find((x) => x.id === id);

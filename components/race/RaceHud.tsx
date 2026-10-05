@@ -441,6 +441,15 @@ export function RaceHud({
 
       {data && <DataCentre snap={snap} state={state} onClose={() => setData(false)} />}
 
+      {snap.replaying && (
+        <div className="absolute left-1/2 top-16 z-30 flex -translate-x-1/2 items-center gap-3 rounded-lg bg-black/85 px-4 py-2 text-sm text-white shadow-xl">
+          <span className="font-black tracking-wider text-[#f5d90a]">▶ REPETICIÓN</span>
+          <button type="button" onClick={() => liveRace.stopReplay()} className="rounded bg-white px-3 py-1 text-xs font-bold text-black hover:bg-white/80">
+            Volver a resultados
+          </button>
+        </div>
+      )}
+
       {snap.finished && snap.result && (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-black/75 p-4 backdrop-blur-sm">
           <div className="flex h-full max-h-[900px] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-line-2 bg-panel text-fg shadow-2xl">
@@ -457,8 +466,25 @@ export function RaceHud({
                 </button>
               </div>
             </header>
-            <div className="flex min-h-0 flex-1 flex-col p-5">
-              <ResultsTable state={state} result={snap.result} />
+            <div className="grid min-h-0 flex-1 gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_280px]">
+              <div className="flex min-h-0 flex-col">
+                <ResultsTable state={state} result={snap.result} />
+              </div>
+              <div className="flex min-h-0 flex-col">
+                <div className="mb-2 text-xs font-black uppercase tracking-wider text-muted">Momentos clave</div>
+                <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 text-xs">
+                  {snap.highlights.length === 0 && <li className="text-muted">Carrera sin incidencias.</li>}
+                  {snap.highlights.map((e, i) => (
+                    <li key={`${e.time}-${i}`}>
+                      <button type="button" onClick={() => liveRace.replay(e.time)} className="flex w-full items-start gap-2 rounded-md px-2 py-1 text-left hover:bg-panel-3" title="Ver la repetición">
+                        <span className="shrink-0 font-mono text-dim">V{e.lap}</span>
+                        <span className="min-w-0 flex-1">{e.text}</span>
+                        <span className="shrink-0 text-accent">▶</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
           </div>
         </div>

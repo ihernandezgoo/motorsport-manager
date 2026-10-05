@@ -98,6 +98,8 @@ export interface LivePlayer {
   needsOther: boolean;
   /** Último mensaje de radio reciente del piloto. */
   radio: string | null;
+  /** Juegos de repuesto que quedan (null si no se lleva la cuenta). */
+  spareSets: { compound: Compound; wear: number }[] | null;
 }
 
 export interface LiveSnapshot {
@@ -132,6 +134,10 @@ export interface LiveSnapshot {
   redFlag: { restartIn: number } | null;
   /** Orden de equipo vigente para los coches del jugador. */
   teamOrder: TeamOrder;
+  /** Repetición de un momento de la carrera ya terminada. */
+  replaying: boolean;
+  /** Momentos clave de la carrera (solo al terminar). */
+  highlights: RaceEvent[];
 }
 
 const IMPORTANT: RaceEvent["type"][] = ["sc", "vsc", "red", "weather"];
@@ -143,6 +149,7 @@ class LiveRaceStore {
   private speed = 10;
   private playing = false;
   private finished = false;
+  private replaying = false;
   private autoPause = true;
   private pauseReason: string | null = null;
   private handled = new Set<number>();
@@ -217,9 +224,40 @@ class LiveRaceStore {
     this.emit();
   }
 
+  /** Repite la carrera terminada desde unos segundos antes del instante `t`. */
+  replay(t: number) {
+    if (!this.sim?.done || (!this.finished && !this.replaying)) return;
+    this.replaying = true;
+    this.finished = false;
+    this.clock = Math.max(0, t - 6 * Math.max(1, this.speed));
+    this.speed = Math.min(this.speed, 2);
+    this.playing = true;
+    this.pauseReason = null;
+    this.startLoop();
+    this.emit();
+  }
+
+  /** Termina la repetición y vuelve a los resultados. */
+  stopReplay() {
+    if (!this.replaying) return;
+    this.replaying = false;
+    this.finished = true;
+    this.playing = false;
+    this.clock = this.endTime();
+    this.stopLoop();
+    this.emit();
+  }
+
   result(): RaceResult | null {
     if (!this.sim || !this.sim.done) return null;
     return scoreResult(this.sim.toResult());
+  }
+
+  /** Desgaste final de los juegos de neumáticos que han usado los pilotos del jugador. */
+  tyreUsage(): Record<string, { id: string; wear: number }[]> {
+    const sim = this.sim;
+    if (!sim) return {};
+    return Object.fromEntries(sim.cars.filter((c) => c.isPlayer).map((c) => [c.driverId, sim.tyreUsage(c.driverId)]));
   }
 
   /** Estrategia recomendada para el resto de la carrera. */
@@ -228,6 +266,7 @@ class LiveRaceStore {
   }
 
   setStyle(id: string, s: DrivingStyle) {
+    if (this.replaying) return;
     this.sim?.setStyle(id, s);
     this.emit();
   }
@@ -246,7 +285,7 @@ class LiveRaceStore {
    */
   requestPit(id: string, c: Compound | null) {
     const sim = this.sim;
-    if (!sim) return;
+    if (!sim || this.replaying || sim.done) return;
     const car = sim.cars.find((x) => x.driverId === id);
     if (car?.status === "run") {
       const current = sim.completedAt(car, this.clock).k + 1;
@@ -322,6 +361,7 @@ class LiveRaceStore {
     if (this.sim.done && this.clock >= this.endTime()) {
       this.clock = this.endTime();
       this.finished = true;
+      this.replaying = false;
       this.playing = false;
       this.emit();
       return;
@@ -361,7 +401,7 @@ class LiveRaceStore {
     sim.events.forEach((e, i) => {
       if (this.handled.has(i) || e.time > this.clock) return;
       this.handled.add(i);
-      if (!this.autoPause || !this.playing) return;
+      if (!this.autoPause || !this.playing || this.replaying) return;
       const mine = e.drivers.some((d) => players.has(d)) && ["dnf", "incident", "penalty"].includes(e.type);
       const big = IMPORTANT.includes(e.type) && (e.type !== "weather" || e.text.includes("llover") || e.text.includes("mojada"));
       if (mine || big) {
@@ -507,6 +547,7 @@ class LiveRaceStore {
           powerLoss: c.powerLoss,
           needsOther: sim.cfg.mustTwo && !c.usedWet && new Set(c.usedDry).size < 2,
           radio: lastRadio(c.driverId),
+          spareSets: c.sets ? c.sets.map((s) => ({ compound: s.compound, wear: s.wear })) : null,
         };
       });
     const events = sim.events
@@ -554,7 +595,23 @@ class LiveRaceStore {
         return r ? { restartIn: r.restart - clock } : null;
       })(),
       teamOrder: sim.teamOrders.get(sim.cars.find((c) => c.isPlayer)?.teamId ?? "") ?? "free",
+      replaying: this.replaying,
+      highlights: sim.done && (this.finished || this.replaying) ? this.highlights(sim) : [],
     };
+  }
+
+  /** Momentos clave: neutralizaciones, abandonos, luchas por el podio y lo que les pasa a los pilotos del jugador. */
+  private highlights(sim: RaceSim): RaceEvent[] {
+    const mine = new Set(sim.cars.filter((c) => c.isPlayer).map((c) => c.driverId));
+    const podium = new Set(sim.classification().slice(0, 3).map((e) => e.driverId));
+    return sim.events.filter((e) => {
+      const isMine = e.drivers.some((d) => mine.has(d));
+      if (e.type === "radio" || e.type === "info" || e.type === "restart" || e.type === "order") return false;
+      if (e.type === "sc" || e.type === "vsc" || e.type === "red" || e.type === "dnf") return true;
+      if (e.type === "overtake") return isMine || e.drivers.some((d) => podium.has(d)) && /P[123]\b/.test(e.text);
+      if (e.type === "weather") return e.text.includes("llover") || e.text.includes("mojada");
+      return isMine && e.type !== "fastest";
+    });
   }
 }
 

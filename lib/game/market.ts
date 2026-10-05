@@ -181,7 +181,7 @@ export function generateDriver(state: GameState, rng: Rng, series: SeriesId): Dr
     feedback: skill(-3),
     aggression: Math.round(clamp(62 + gauss(rng) * 8, 40, 90)),
     start: skill(1),
-    potential: Math.round(clamp(pace + 3 + rng() * 16 - (age - 16) * 0.8, pace, 97)),
+    potential: Math.round(clamp(pace + 2 + rng() * 12 - (age - 16) * 0.8, pace, 95)),
     salary: 0,
     contractUntil: state.year,
   };
@@ -194,10 +194,10 @@ export function generateDriver(state: GameState, rng: Rng, series: SeriesId): Dr
 export function developDriver(d: Driver, rng: Rng) {
   d.age++;
   const gap = Math.max(0, d.potential - d.pace);
-  let dp = d.age <= 22 ? gap * 0.3 : d.age <= 26 ? gap * 0.15 : d.age <= 31 ? 0 : d.age <= 34 ? -0.8 : -1.8;
+  let dp = d.age <= 22 ? gap * 0.25 : d.age <= 26 ? gap * 0.1 : d.age <= 30 ? 0 : d.age <= 33 ? -0.9 : -1.8;
   dp += gauss(rng) * 0.8;
   d.pace = Math.round(clamp(d.pace + dp, 55, 99));
-  const exp = d.age <= 24 ? 1.2 : d.age <= 31 ? 0.4 : d.age <= 34 ? -0.3 : -1.2;
+  const exp = d.age <= 24 ? 0.8 : d.age <= 30 ? 0.2 : d.age <= 33 ? -0.5 : -1.2;
   for (const k of ["racecraft", "consistency", "tyre", "wet", "feedback", "start"] as const) {
     d[k] = Math.round(clamp(d[k] + exp + gauss(rng) * 0.8, 55, 99));
   }

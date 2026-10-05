@@ -1,3 +1,5 @@
+import { acceptOffer, declineOffers } from "./game/board";
+import { rngFor } from "./game/rng";
 import { completeWeekend, isSeasonOver, startNextSeason } from "./game/season";
 import type { GameState, WeekendState } from "./game/types";
 import { createWeekendState } from "./game/weekend";
@@ -6,7 +8,7 @@ import { gameStore } from "./store";
 
 export function enterWeekend() {
   gameStore.update((d) => {
-    if (d.weekend || isSeasonOver(d)) return;
+    if (d.weekend || isSeasonOver(d) || d.sacked) return;
     d.weekend = createWeekendState(d, d.nextWeekend, d.player.series, d.player.teamId);
   });
 }
@@ -58,6 +60,19 @@ export async function simulateRestOfSeason(onProgress: (done: number, total: num
     done++;
   }
   onProgress(total, total, "");
+}
+
+/** Acepta la oferta de otro equipo (tras un despido o al acabar la temporada). */
+export function acceptJob(teamId: string) {
+  gameStore.update((d) => {
+    acceptOffer(d, teamId, rngFor(d.seed, d.year, d.nextWeekend, "job", teamId));
+  });
+}
+
+export function declineJobs() {
+  gameStore.update((d) => {
+    if (!d.sacked) declineOffers(d);
+  });
 }
 
 export function nextSeason() {

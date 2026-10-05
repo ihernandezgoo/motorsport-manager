@@ -10,7 +10,10 @@ import { CalendarView } from "./screens/CalendarView";
 import { DevelopmentView } from "./screens/DevelopmentView";
 import { GridsView } from "./screens/GridsView";
 import { Hq } from "./screens/Hq";
+import { CareerModal } from "./screens/CareerModal";
 import { MainMenu } from "./screens/MainMenu";
+import { MarketView } from "./screens/MarketView";
+import { OfficeView } from "./screens/OfficeView";
 import { NewGame } from "./screens/NewGame";
 import { QuickSetup } from "./screens/QuickSetup";
 import { WeekendResultsModal } from "./screens/Results";
@@ -132,6 +135,9 @@ export default function Game() {
       {current === "team" && <TeamView state={state} />}
       {current === "dev" && <DevelopmentView state={state} />}
       {current === "grids" && <GridsView state={state} />}
+      {current === "market" && <MarketView state={state} />}
+      {current === "office" && <OfficeView state={state} />}
+      {(state.sacked || state.offers.length > 0) && <CareerModal state={state} onMenu={() => setMode("menu")} />}
       <WeekendResultsModal state={state} weekendIndex={summary} onClose={() => setSummary(null)} />
     </Shell>
   );

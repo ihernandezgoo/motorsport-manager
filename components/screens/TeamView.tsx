@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { helmetOf } from "@/lib/game/data/liveries";
 import { teamDrivers, teamOverall } from "@/lib/game/format";
-import { driverOverall, engineRating, reliabilityRating } from "@/lib/game/perf";
+import { driverOverall, engineRating, formatMoney, reliabilityRating } from "@/lib/game/perf";
+import { ComponentsPanel } from "../weekend/WeekendExtras";
 import type { Driver, GameState } from "@/lib/game/types";
 import { DriverPortrait, TeamCar } from "../art/Photos";
 import { cx, Nat, Panel, RatingBar, Tabs } from "../ui";
 
 export function TeamView({ state }: { state: GameState }) {
-  const [tab, setTab] = useState<"car" | "drivers">("car");
+  const [tab, setTab] = useState<"car" | "drivers" | "pu">("car");
   const team = state.teams[state.player.teamId];
   const series = team.series;
   const rivals = Object.values(state.teams).filter((t) => t.series === series);
@@ -42,14 +43,19 @@ export function TeamView({ state }: { state: GameState }) {
           tabs={[
             { id: "car", label: "Coche" },
             { id: "drivers", label: "Pilotos" },
+            ...(series === "f1" ? [{ id: "pu" as const, label: "Motor" }] : []),
           ]}
         />
         <TeamCar team={team} series={series} number={drivers[0]?.number} helmet={helmetOf(drivers[0] ?? { id: "x", nat: "GBR" }).base} className="ml-auto hidden h-28 w-full max-w-xl md:block" />
       </div>
-      {tab === "drivers" ? (
+      {tab === "pu" ? (
+        <Panel title="Componentes de la unidad de potencia" className="min-h-0 flex-1">
+          <ComponentsPanel state={state} />
+        </Panel>
+      ) : tab === "drivers" ? (
         <div className={cx("grid min-h-0 flex-1 gap-4", drivers.length > 2 ? "lg:grid-cols-3" : "lg:grid-cols-2")}>
           {drivers.map((d) => (
-            <DriverCard key={d.id} d={d} color={team.color} narrow={drivers.length > 2} />
+            <DriverCard key={d.id} d={d} color={team.color} narrow={drivers.length > 2} contract={d.next ? (d.next.teamId === team.id ? `Renovado hasta ${d.next.until}` : `Se marcha a ${state.teams[d.next.teamId]?.short} en ${state.year + 1}`) : `Contrato hasta ${d.contractUntil} · ${d.salary < 0 ? "aporta " + formatMoney(-d.salary) : formatMoney(d.salary)}/temporada`} />
           ))}
         </div>
       ) : (
@@ -96,7 +102,7 @@ export function TeamView({ state }: { state: GameState }) {
   );
 }
 
-function DriverCard({ d, color, narrow }: { d: Driver; color: string; narrow?: boolean }) {
+function DriverCard({ d, color, narrow, contract }: { d: Driver; color: string; narrow?: boolean; contract: string }) {
   return (
     <section className={cx("flex min-h-0 overflow-hidden rounded-xl border border-line bg-panel", narrow && "flex-col")}>
       <DriverPortrait driver={d} color={color} kind="full" rounded="" className={narrow ? "min-h-0 w-full flex-1" : "w-36 shrink-0 sm:w-44"} />
@@ -104,8 +110,9 @@ function DriverCard({ d, color, narrow }: { d: Driver; color: string; narrow?: b
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-xs text-muted">
-              <span className="font-mono">#{d.number}</span> <Nat code={d.nat} /> {d.age} años
+              <span className="font-mono">#{d.number}</span> <Nat code={d.nat} /> {d.age} años{d.age <= 25 ? ` · potencial ${d.potential}` : ""}
             </div>
+            <div className="text-[11px] text-muted">{contract}</div>
             <div className="truncate text-lg font-black">
               {d.first} <span className="uppercase">{d.last}</span>
             </div>

@@ -8,6 +8,10 @@ import { helmetOf } from "@/lib/game/data/liveries";
 import { driverStandings, isSeasonOver, teamStandings } from "@/lib/game/season";
 import type { GameState, SeriesId } from "@/lib/game/types";
 import { weekendSeries } from "@/lib/game/weekend";
+import { boardMood } from "@/lib/game/board";
+import { marketIsOpen, nextSeasonLineup, SEATS } from "@/lib/game/market";
+import { emptySlots } from "@/lib/game/sponsors";
+import { confidenceColor } from "./OfficeView";
 import { DriverPortrait, TeamCar } from "../art/Photos";
 import { TrackView } from "../race/TrackView";
 import { Btn, cx, Meter, Nat, Pager, Panel, SeriesBadge, Stat, Stripe, Tabs, useRowPager } from "../ui";
@@ -61,6 +65,7 @@ export function Hq({ state, onEnterWeekend, onShowResults }: { state: GameState;
         <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
           {over ? <SeasonOver state={state} /> : <NextEvent state={state} onEnter={onEnterWeekend} onSimulated={onShowResults} onSimRest={simRest} />}
           <div className="hidden min-h-0 flex-col gap-4 lg:flex">
+            <Alerts state={state} />
             <Top10
               title={`Top 10 pilotos ${SERIES_SHORT[series]}`}
               icon={Users}
@@ -240,9 +245,45 @@ function TeamSnapshot({ state }: { state: GameState }) {
         <Stat label="Campeonato" value={started ? `P${teamPos}` : "—"} sub={`${teamPts} pts`} />
         <Stat label="Coche" value={teamOverall(state, team)} sub={`${carRank}º de ${rank.length}`} />
         <Stat label="Presupuesto" value={formatMoney(team.budget)} sub={`+${formatMoney(team.sponsor)}/carrera`} />
-        <Stat label="Proyectos" value={state.projects.length} sub={state.projects.length ? "En fábrica" : "Ninguno"} />
+        <Stat
+          label="Junta"
+          value={<span style={{ color: confidenceColor(state.board.confidence) }}>{Math.round(state.board.confidence)}%</span>}
+          sub={`${boardMood(state.board.confidence)} · objetivo P${state.board.target}`}
+        />
       </div>
     </div>
+  );
+}
+
+/** Avisos de gestión pendientes. */
+function Alerts({ state }: { state: GameState }) {
+  const team = state.teams[state.player.teamId];
+  const items: { text: string; bad?: boolean }[] = [];
+  if (state.board.confidence < 35) items.push({ text: `La junta está ${boardMood(state.board.confidence).toLowerCase()}: tu puesto peligra`, bad: true });
+  if (team.budget < 0) items.push({ text: "Presupuesto en negativo", bad: true });
+  if (marketIsOpen(state)) {
+    const expiring = Object.values(state.drivers).filter((d) => d.teamId === team.id && d.contractUntil <= state.year && !d.next);
+    if (expiring.length) items.push({ text: `Contratos por decidir: ${expiring.map((d) => d.last).join(", ")}` });
+    const lineup = nextSeasonLineup(state, team.id).length;
+    if (lineup < SEATS[team.series]) items.push({ text: `Asientos libres para ${state.year + 1}: ${SEATS[team.series] - lineup}` });
+  }
+  const empty = emptySlots(state).length;
+  if (empty) items.push({ text: `${empty} ${empty === 1 ? "hueco" : "huecos"} de patrocinio sin cubrir` });
+  for (const [id, comps] of Object.entries(state.components ?? {})) {
+    const worn = Object.values(comps).some((c) => c.wear > 85);
+    if (worn) items.push({ text: `${state.drivers[id]?.last}: componentes de motor al límite` });
+  }
+  if (items.length === 0) return null;
+  return (
+    <Panel title="Avisos" icon={Mail} className="shrink-0">
+      <ul className="space-y-1 text-xs">
+        {items.map((i) => (
+          <li key={i.text} className={i.bad ? "text-bad" : "text-warn"}>
+            • {i.text}
+          </li>
+        ))}
+      </ul>
+    </Panel>
   );
 }
 
@@ -366,7 +407,10 @@ function SeasonOver({ state }: { state: GameState }) {
     <section className="mm-panel flex min-h-0 flex-col justify-center overflow-hidden rounded-2xl p-6">
       <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-accent">Temporada {state.year} terminada</div>
       <h2 className="mt-1 text-3xl font-black">¡Campeones {state.year}!</h2>
-      <p className="mt-1 text-sm text-muted">Tu equipo ha terminado {myPos}º en el campeonato de equipos.</p>
+      <p className="mt-1 text-sm text-muted">
+        Tu equipo ha terminado {myPos}º en el campeonato de equipos (objetivo: P{state.board.target}). Confianza de la junta: {Math.round(state.board.confidence)}%.
+      </p>
+      <p className="mt-1 text-xs text-muted">Al empezar la nueva temporada se cierra el mercado: se aplican los fichajes, se retiran los veteranos y llegan canteranos a F3 y F2.</p>
       {rec && (
         <div className="mt-4 grid gap-3 md:grid-cols-3">
           {(["f1", "f2", "f3"] as SeriesId[]).map((s) => (

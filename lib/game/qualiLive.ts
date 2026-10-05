@@ -308,7 +308,9 @@ export class QualiSim {
 
   private aiOrder(car: QCar, t: number): QualiOrder {
     const { ctx } = this.cfg;
-    let { compound, risk } = aiQualiChoice(ctx.series, ctx.circuit, this.wetAt(t), ctx.sprint, this.cfg.segIdx);
+    const choice = aiQualiChoice(ctx.series, ctx.circuit, this.wetAt(t), ctx.sprint, this.cfg.segIdx);
+    const risk = choice.risk;
+    let compound = choice.compound;
     if (car.isPlayer && this.setFor(car, compound) === undefined) {
       const alt = [...dryCompounds(ctx.series, ctx.circuit), "I", "W"].find((c) => this.setFor(car, c as Compound) !== undefined);
       if (alt) compound = alt as Compound;

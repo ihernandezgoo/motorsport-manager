@@ -15,6 +15,7 @@ import { PracticeSession } from "./PracticeSession";
 import { QualifyingSession } from "./QualifyingSession";
 import { RaceSession } from "./RaceSession";
 import { WeatherForecast } from "./WeatherForecast";
+import { ComponentsPanel, TyreAllocation } from "./WeekendExtras";
 
 export interface QuickActions {
   onExit: () => void;
@@ -54,7 +55,7 @@ export function WeekendView({
       }}
     />
   ) : session.kind === "practice" ? (
-    <PracticeSession key={`${wk.id}-p`} state={state} ws={ws} />
+    <PracticeSession key={`${wk.id}-${session.key}`} state={state} ws={ws} session={session} />
   ) : session.kind === "quali" || session.kind === "sprintQuali" ? (
     <QualifyingSession key={`${wk.id}-${session.key}`} state={state} ws={ws} session={session} />
   ) : (
@@ -107,7 +108,7 @@ export function WeekendView({
 }
 
 function WeekendSide({ state, ws }: { state: GameState; ws: WeekendState }) {
-  const [tab, setTab] = useState<"forecast" | "circuit">("forecast");
+  const [tab, setTab] = useState<"forecast" | "circuit" | "tyres" | "pu">("forecast");
   const c = circuitOf(state.calendar[ws.weekendIndex]);
   return (
     <div className="hidden min-h-0 xl:block">
@@ -122,11 +123,17 @@ function WeekendSide({ state, ws }: { state: GameState; ws: WeekendState }) {
             tabs={[
               { id: "forecast", label: "Pronóstico" },
               { id: "circuit", label: "Circuito" },
+              { id: "tyres", label: "Neumáticos" },
+              ...(state.player.series === "f1" && !state.quick ? [{ id: "pu" as const, label: "Motor" }] : []),
             ]}
           />
         }
       >
-        {tab === "forecast" ? (
+        {tab === "tyres" ? (
+          <TyreAllocation state={state} ws={ws} />
+        ) : tab === "pu" ? (
+          <ComponentsPanel state={state} ws={ws} />
+        ) : tab === "forecast" ? (
           <>
             <WeatherForecast sessions={ws.sessions} weather={ws.weather} step={ws.step} />
             <p className="mt-2 shrink-0 text-[11px] text-dim">Probabilidad de lluvia por cuartos de cada sesión. Los pronósticos pueden fallar.</p>

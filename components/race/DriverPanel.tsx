@@ -170,6 +170,8 @@ export function DriverPanel({
           <div className="grid grid-cols-5 gap-1.5">
             {compounds.map((c) => {
               const life = isWetTyre(c) ? null : tyreLife(snap.series, circuit, c, driver.tyre);
+              const spare = p.spareSets?.filter((s) => s.compound === c);
+              const bestWear = spare && spare.length ? Math.min(...spare.map((s) => s.wear)) : null;
               return (
                 <button
                   type="button"
@@ -185,6 +187,11 @@ export function DriverPanel({
                   </span>
                   <span className="font-semibold">{COMPOUND_INFO[c].name}</span>
                   <span className="text-white/50">{life ? `~${life} v` : "Mojado"}</span>
+                  {spare && (
+                    <span className={cx("text-[10px]", spare.length === 0 ? "text-[#f87171]" : "text-white/60")}>
+                      {spare.length === 0 ? "Sin juegos" : `×${spare.length}${bestWear ? ` · ${Math.round(bestWear)}%` : " nuevo"}`}
+                    </span>
+                  )}
                 </button>
               );
             })}

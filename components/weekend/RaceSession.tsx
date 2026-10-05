@@ -8,7 +8,8 @@ import { describePlan, planStrategy, tyreLife } from "@/lib/game/strategy";
 import { availableCompounds, COMPOUND_INFO, dryCompounds, isWetTyre } from "@/lib/game/tyres";
 import type { Compound, GameState, SessionDef, WeekendState } from "@/lib/game/types";
 import { earlyRaceWetness, forecastLabel, wetnessLabel } from "@/lib/game/weather";
-import { raceConfigFor } from "@/lib/game/weekend";
+import { freshestSet, setLabel } from "@/lib/game/tyreSets";
+import { advanceStep, raceConfigFor, wearMultFor } from "@/lib/game/weekend";
 import { liveRace, useLiveRace } from "@/lib/liveRace";
 import { Btn, cx, PagedGrid, Panel, Segmented, Stripe, Tabs, Tyre } from "../ui";
 import { RaceHud } from "../race/RaceHud";
@@ -33,9 +34,19 @@ export function RaceSession({
   const finish = () => {
     const res = liveRace.result();
     if (!res) return;
-    updateWeekend((w) => {
+    const usage = liveRace.tyreUsage();
+    updateWeekend((w, d) => {
       w.results.push(res);
-      w.step++;
+      for (const [id, used] of Object.entries(usage)) {
+        for (const u of used) {
+          const set = w.tyres?.[id]?.find((s) => s.id === u.id);
+          if (set) {
+            set.wear = Math.max(set.wear, Math.min(100, u.wear));
+            set.used = true;
+          }
+        }
+      }
+      advanceStep(d, w);
     });
     liveRace.dispose();
   };
@@ -66,10 +77,18 @@ function RacePrep({ state, ws, session, liveKey }: { state: GameState; ws: Weeke
 
   const [compound, setCompound] = useState<Record<string, Compound>>(() => Object.fromEntries(mine.map((d) => [d.id, defaultCompound(d.id)])));
   const [auto, setAuto] = useState<Record<string, boolean>>(() => Object.fromEntries(mine.map((d) => [d.id, false])));
+  const [setChoice, setSetChoice] = useState<Record<string, string>>({});
   const [side, setSide] = useState<"grid" | "tyres">("grid");
+  const setsOf = (id: string) => (ws.tyres?.[id] ?? []).filter((s) => s.wear < 100);
+  /** Juego de salida: el elegido o el menos gastado del compuesto. */
+  const startSet = (id: string) => {
+    const sets = setsOf(id);
+    return sets.find((s) => s.id === setChoice[id] && s.compound === compound[id]) ?? freshestSet(sets, compound[id]);
+  };
 
   const start = (instant: boolean) => {
-    const full = raceConfigFor(state, ws, session.key, { playerTeamId: team.id, startCompounds: compound });
+    const startSets = Object.fromEntries(mine.map((d) => [d.id, startSet(d.id)]).filter(([, s]) => !!s));
+    const full = raceConfigFor(state, ws, session.key, { playerTeamId: team.id, startCompounds: compound, startSets });
     const autoMap = instant ? Object.fromEntries(mine.map((d) => [d.id, true])) : auto;
     liveRace.start(liveKey, full, { auto: autoMap, speed: state.settings.defaultSpeed, autoPause: state.settings.autoPause });
     if (instant) liveRace.finishNow();
@@ -123,14 +142,51 @@ function RacePrep({ state, ws, session, liveKey }: { state: GameState; ws: Weeke
                     </div>
                     <Segmented
                       value={c}
-                      onChange={(v) => setCompound((x) => ({ ...x, [d.id]: v }))}
-                      options={compounds.map((cp) => ({ value: cp, title: COMPOUND_INFO[cp].name, label: <span className="flex items-center gap-1"><Tyre c={cp} size={18} /> {COMPOUND_INFO[cp].name}</span>, activeColor: "#2f3a4a" }))}
+                      onChange={(v) => {
+                        setCompound((x) => ({ ...x, [d.id]: v }));
+                        setSetChoice((x) => ({ ...x, [d.id]: "" }));
+                      }}
+                      options={compounds.map((cp) => {
+                        const n = setsOf(d.id).filter((s) => s.compound === cp).length;
+                        return {
+                          value: cp,
+                          title: `${COMPOUND_INFO[cp].name}: ${n} juegos disponibles`,
+                          label: (
+                            <span className="flex items-center gap-1">
+                              <Tyre c={cp} size={18} /> {COMPOUND_INFO[cp].name} <span className="text-[10px] opacity-70">×{n}</span>
+                            </span>
+                          ),
+                          activeColor: "#2f3a4a",
+                          disabled: ws.tyres?.[d.id] ? n === 0 : false,
+                        };
+                      })}
                     />
+                    {ws.tyres?.[d.id] && (
+                      <select
+                        value={startSet(d.id)?.id ?? ""}
+                        onChange={(e) => setSetChoice((x) => ({ ...x, [d.id]: e.target.value }))}
+                        className="rounded border border-line-2 bg-panel-2 px-1 py-0.5 text-[11px]"
+                      >
+                        {setsOf(d.id)
+                          .filter((s) => s.compound === c)
+                          .map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {setLabel(s)}
+                            </option>
+                          ))}
+                      </select>
+                    )}
                     <label className="ml-auto flex cursor-pointer items-center gap-2 text-xs text-muted">
                       <input type="checkbox" checked={auto[d.id]} onChange={(e) => setAuto((a) => ({ ...a, [d.id]: e.target.checked }))} />
                       Delegar en el ingeniero (IA)
                     </label>
                   </div>
+                  {ws.gridPenalty?.[d.id] && session.kind === "race" && (
+                    <div className="mt-1 text-xs text-bad">
+                      Sanción de {ws.gridPenalty[d.id].places} puestos ({ws.gridPenalty[d.id].reason})
+                    </div>
+                  )}
+                  {wearMultFor(ws, d.id) < 1 && <div className="mt-1 text-[11px] text-good">Datos de tandas largas: −{Math.round((1 - wearMultFor(ws, d.id)) * 100)} % de desgaste</div>}
                   <div className="mt-1 truncate text-xs text-muted">
                     {s ? (
                       <>

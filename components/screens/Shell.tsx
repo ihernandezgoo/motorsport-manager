@@ -1,4 +1,4 @@
-import { Calendar, CarFront, ChevronRight, Flag, House, Menu, Settings2, Trophy, Users, Wallet, Wrench, type LucideIcon } from "lucide-react";
+import { ArrowLeftRight, Briefcase, Calendar, CarFront, ChevronRight, Flag, House, Menu, Settings2, Trophy, Users, Wallet, Wrench, type LucideIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { SERIES_NAMES } from "@/lib/game/data/teams";
 import { formatDateLong } from "@/lib/game/format";
@@ -8,7 +8,7 @@ import type { GameState } from "@/lib/game/types";
 import { gameStore } from "@/lib/store";
 import { cx, SeriesBadge, textOn } from "../ui";
 
-export type View = "hq" | "weekend" | "calendar" | "standings" | "team" | "dev" | "grids";
+export type View = "hq" | "weekend" | "calendar" | "standings" | "team" | "dev" | "market" | "office" | "grids";
 
 const NAV: { id: View; label: string; Icon: LucideIcon }[] = [
   { id: "hq", label: "Sede", Icon: House },
@@ -17,6 +17,8 @@ const NAV: { id: View; label: string; Icon: LucideIcon }[] = [
   { id: "standings", label: "Clasificaciones", Icon: Trophy },
   { id: "team", label: "Mi equipo", Icon: CarFront },
   { id: "dev", label: "Desarrollo", Icon: Wrench },
+  { id: "market", label: "Mercado", Icon: ArrowLeftRight },
+  { id: "office", label: "Despacho", Icon: Briefcase },
   { id: "grids", label: "Parrillas", Icon: Users },
 ];
 

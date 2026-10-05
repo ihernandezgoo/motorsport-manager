@@ -30,8 +30,10 @@ Cada partida lleva un número de versión (`SAVE_VERSION` en `lib/game/season.ts
 - **Fin de semana rápido**: eliges categoría, circuito, equipo, formato (con o sin sprint en F1) y meteorología (realista, seco, lluvia o cambiante) y juegas un fin de semana suelto, sin tocar tu partida.
 
 **Fin de semana**
-- **Libres**: minijuego de reglajes (carga aerodinámica, suspensión y marchas) guiado por el feedback del piloto.
-- **Clasificación**: Q1/Q2/Q3 con eliminaciones, *sprint shootout* con compuestos obligatorios y sesión única en F2/F3. Por tanda eliges neumático y nivel de riesgo.
+- **Libres** con el formato real: FP1, FP2 y FP3 en F1; una sola sesión en los fines de semana sprint y en F2/F3. En cada tanda eliges programa (reglajes guiados por el feedback del piloto, o tanda larga que mide la degradación y reduce el desgaste en carrera) y qué juego de neumáticos gastar.
+- **Neumáticos limitados**: asignación de juegos por fin de semana (13 en F1, 12 con sprint; 3+3 en F2; 5 en F3, más los de lluvia). Los juegos usados pierden el pico de agarre y su desgaste se arrastra a la clasificación y la carrera.
+- **Clasificación en vivo**: reloj de sesión, coches en pista, vueltas de salida, lanzadas y de entrada, tráfico, evolución de la pista, cambios de tiempo, banderas rojas y bandera a cuadros. Decides cuándo sale cada piloto, con qué juego, cuántas vueltas lanzadas y con qué riesgo, o lo delegas en el ingeniero.
+- **Componentes de la unidad de potencia (F1)**: cupo de motores, turbos, ERS y cajas por temporada; el desgaste aumenta las averías y superar el cupo cuesta puestos en la parrilla del GP (los rivales también sufren sanciones).
 - **Carreras**: Gran Premio y sprint en F1; sprint con parrilla invertida (top 10 en F2, top 12 en F3) y carrera principal en F2/F3.
 
 **Carrera en directo**
@@ -48,6 +50,19 @@ Cada partida lleva un número de versión (`SAVE_VERSION` en `lib/game/season.ts
 - Presupuesto, patrocinio, premios por puntos y premio final según la posición en el campeonato de equipos.
 - Proyectos de desarrollo por área (aerodinámica, chasis, fiabilidad y unidad de potencia si eres equipo oficial) y mejoras de instalaciones. Los rivales también desarrollan.
 - Clasificaciones con el resultado de cada ronda, calendario con ganadores, noticias y temporadas sucesivas, con pilotos que envejecen y coches que se reequilibran.
+- **Mercado de pilotos**: contratos con salario (en F2/F3, aportación de patrocinio) y duración, renovaciones, rescisiones y fichajes para la temporada siguiente. Los rivales renuevan y fichan; los mejores de F3 y F2 ascienden, los veteranos se retiran y llegan canteranos generados con su potencial.
+- **Junta directiva**: objetivo por temporada según coche y pilotos, confianza que sube o baja con cada fin de semana, despido y ofertas de otros equipos (también de la categoría superior) para hacer carrera de F3 a F1.
+- **Personal**: director técnico, ingeniero de pista jefe y jefe de mecánicos, con bolsa de candidatos.
+- **Patrocinadores**: acuerdos con pago fijo y primas por objetivos (puntos, podios, ganar al rival directo…).
+- **Repetición de momentos clave** al terminar cada carrera.
+
+## Tests
+
+```bash
+npm test
+```
+
+Simulan varias temporadas completas sin interfaz (parrillas, mercado, finanzas, determinismo), la clasificación en vivo, los neumáticos y la migración de partidas.
 
 ## Estructura
 
@@ -64,6 +79,9 @@ Cada partida lleva un número de versión (`SAVE_VERSION` en `lib/game/season.ts
 | `lib/game/weekend.ts`, `season.ts`, `development.ts` | Fin de semana, temporada, puntos, finanzas y desarrollo |
 | `lib/store.ts`, `lib/liveRace.ts` | Ranuras de partida (persistidas) y controlador de la carrera en directo |
 | `lib/game/migrate.ts` | Migraciones de partidas guardadas entre versiones |
+| `lib/game/qualiLive.ts`, `lib/liveQuali.ts` | Clasificación en vivo y su controlador |
+| `lib/game/market.ts`, `board.ts`, `staff.ts`, `sponsors.ts` | Mercado y contratos, junta directiva, personal y patrocinadores |
+| `lib/game/tyreSets.ts`, `components.ts` | Asignación de neumáticos y componentes de la unidad de potencia |
 | `components/` | Interfaz (sede, fin de semana, carrera en directo, clasificaciones...) |
 
 El motor (`lib/game`) no depende de React, así que se puede usar para simular temporadas completas sin interfaz.

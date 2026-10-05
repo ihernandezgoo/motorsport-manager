@@ -1,4 +1,4 @@
-import { boardSeasonEnd, boardWeekend, initBoard, seasonTarget } from "./board";
+import { boardSeasonEnd, boardWeekend, initBoard, newSeasonBoard } from "./board";
 import { accrueComponentWear, applyFailures, resetComponents, tracksComponents } from "./components";
 import { CALENDAR_2026 } from "./data/calendar";
 import { CIRCUITS } from "./data/circuits";
@@ -8,7 +8,7 @@ import { developDriver, initContracts, marketTick, runOffseason } from "./market
 import { addNews, fullName } from "./news";
 import { SERIES_CFG } from "./perf";
 import { clamp, gauss, rngFor, type Rng } from "./rng";
-import { initSponsors, refreshSponsorOffers, sponsorIncome, sponsorsNewSeason } from "./sponsors";
+import { autoSignSponsors, initSponsors, refreshSponsorOffers, sponsorIncome, sponsorsNewSeason } from "./sponsors";
 import { initStaff, staffNewSeason, staffWage } from "./staff";
 import { driverStandings, teamStandings } from "./standings";
 import type { GameState, RaceKind, RaceResult, SeriesId } from "./types";
@@ -187,6 +187,7 @@ export function completeWeekend(state: GameState, weekendIndex: number, playerRe
   if (!state.quick) {
     if (wk[player.series]) boardWeekend(state, wk.id, rng);
     marketTick(state, rng);
+    if (!state.sacked) autoSignSponsors(state, rng);
   }
   if (isSeasonOver(state)) closeSeason(state, rng);
 }
@@ -240,10 +241,7 @@ export function startNextSeason(state: GameState) {
   staffNewSeason(state, rng);
   sponsorsNewSeason(state, rng);
   resetComponents(state);
-  state.board.target = seasonTarget(state);
-  state.board.lastDelta = 0;
-  state.board.warned = false;
-  state.board.confidence = Math.round(state.board.confidence * 0.7 + 55 * 0.3);
+  newSeasonBoard(state);
 
   const team = state.teams[state.player.teamId];
   addNews(state, {

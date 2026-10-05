@@ -2,7 +2,7 @@ import { CALENDAR_2026 } from "./data/calendar";
 import { CIRCUITS } from "./data/circuits";
 import { newGame } from "./season";
 import type { GameState, QuickConfig } from "./types";
-import { createWeekendState, skipPractice } from "./weekend";
+import { createWeekendState, skipAllPractice } from "./weekend";
 
 /** Crea una partida desechable con un único fin de semana para probar cualquier categoría y circuito. */
 export function newQuickWeekend(cfg: QuickConfig, seed: number): GameState {
@@ -15,6 +15,6 @@ export function newQuickWeekend(cfg: QuickConfig, seed: number): GameState {
   state.news = [];
   state.quick = cfg;
   state.weekend = createWeekendState(state, 0, cfg.series, cfg.teamId, cfg.weather);
-  if (cfg.skipPractice) skipPractice(state, state.weekend);
+  if (cfg.skipPractice) skipAllPractice(state, state.weekend);
   return state;
 }

@@ -17,7 +17,8 @@ export const SACK_SEASON_END = 25;
 export function seasonTarget(state: GameState): number {
   const exp = expectedRank(state, state.player.teamId);
   const n = seriesTeamCount(state, state.player.series);
-  return clamp(exp <= 2 ? exp : exp + 1, 1, n);
+  // Los grandes deben cumplir; los medianos tienen un puesto de margen; nadie puede aspirar a ser último.
+  return clamp(exp <= 2 ? exp : exp <= n / 2 ? exp + 1 : exp, 1, n - 1);
 }
 
 export function targetText(target: number): string {
@@ -27,7 +28,17 @@ export function targetText(target: number): string {
 }
 
 export function initBoard(state: GameState, confidence = 60): BoardState {
-  return { confidence, target: seasonTarget(state), lastDelta: 0, warned: false };
+  return { confidence, target: seasonTarget(state), expected: expectedRank(state, state.player.teamId), lastDelta: 0, warned: false };
+}
+
+/** Nuevo objetivo de temporada (tras el mercado y el reequilibrio de coches). */
+export function newSeasonBoard(state: GameState) {
+  const b = state.board;
+  b.target = seasonTarget(state);
+  b.expected = expectedRank(state, state.player.teamId);
+  b.lastDelta = 0;
+  b.warned = false;
+  b.confidence = Math.round(b.confidence * 0.7 + 55 * 0.3);
 }
 
 export function boardMood(confidence: number): string {
@@ -58,9 +69,13 @@ export function boardWeekend(state: GameState, weekendId: string, rng: Rng) {
   }
   const order = teams.map((t) => t.id).sort((a, b) => (pts.get(b) ?? 0) - (pts.get(a) ?? 0) || (best.get(a) ?? 99) - (best.get(b) ?? 99));
   const actual = order.indexOf(state.player.teamId) + 1;
-  const expected = expectedRank(state, state.player.teamId);
   const b = state.board;
-  const delta = clamp((expected - actual) * 1.2, -6, 6);
+  b.expected ??= expectedRank(state, state.player.teamId);
+  // Repartido por carreras: una temporada de 24 fines de semana no pesa el doble que una de 12.
+  const rounds = Math.max(1, state.calendar.filter((w) => w[series]).length);
+  let delta = clamp((b.expected - actual) * (12 / rounds), -4, 4);
+  if (state.teams[state.player.teamId].budget < 0) delta -= 1.5;
+  delta += (55 - b.confidence) * 0.04;
   b.confidence = clamp(b.confidence + delta, 0, 100);
   b.lastDelta = delta;
 
@@ -82,7 +97,7 @@ export function boardSeasonEnd(state: GameState, rng: Rng) {
   const b = state.board;
   const team = state.teams[state.player.teamId];
   state.career.push({ year: state.year, teamId: team.id, teamName: team.name, series, pos, target: b.target });
-  const delta = (b.target - pos) * 7 + (pos <= b.target ? 12 : -12);
+  const delta = clamp((b.target - pos) * 5, -25, 20) + (pos <= b.target ? 8 : -8);
   b.confidence = clamp(b.confidence + delta, 0, 100);
   b.lastDelta = delta;
   const date = state.calendar[state.calendar.length - 1].date;
@@ -100,7 +115,7 @@ export function boardSeasonEnd(state: GameState, rng: Rng) {
     series,
     title: pos <= b.target ? `✅ La junta celebra la temporada: P${pos} (objetivo P${b.target})` : `La junta te mantiene pese a no cumplir el objetivo (P${pos} de P${b.target})`,
   });
-  state.offers = pos <= b.target ? makeOffers(state, rng, true) : [];
+  state.offers = pos <= b.target ? makeOffers(state, rng, true, b.target - pos) : [];
   for (const o of state.offers) {
     addNews(state, { date, series: state.teams[o.teamId].series, title: `📨 Oferta de ${state.teams[o.teamId].name}`, body: o.reason });
   }
@@ -123,15 +138,17 @@ function sack(state: GameState, rng: Rng, date: string) {
  * Ofertas de trabajo. Tras una buena temporada llegan de equipos más atractivos (mejor coche o
  * categoría superior); tras un despido, de equipos menos atractivos que el que te ha echado.
  */
-function makeOffers(state: GameState, rng: Rng, better: boolean): JobOffer[] {
+function makeOffers(state: GameState, rng: Rng, better: boolean, over = 0): JobOffer[] {
   const cur = state.player.teamId;
   const appeal = teamAppeal(state, cur);
   const curLevel = LEVEL[state.player.series];
+  // Cuanto más se supera el objetivo, mayor es el salto que se ofrece.
+  const maxJump = 3 + 4 * over;
   const cands = Object.values(state.teams).filter((t) => {
     if (t.id === cur) return false;
     const a = teamAppeal(state, t.id);
     const lvl = LEVEL[t.series];
-    return better ? a > appeal + 1 && lvl <= curLevel + 1 && (lvl === curLevel || a < (curLevel + 1) * 10 + 5) : a < appeal - 1 && lvl >= curLevel - 1;
+    return better ? a > appeal + 1 && a <= appeal + maxJump && lvl <= curLevel + 1 : a < appeal - 1 && lvl >= curLevel - 1;
   });
   const n = better ? (rng() < state.board.confidence / 100 ? 1 + (rng() < 0.4 ? 1 : 0) : 0) : Math.min(cands.length, 1 + Math.floor(rng() * 3));
   const out: JobOffer[] = [];
