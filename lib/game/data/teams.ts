@@ -124,6 +124,10 @@ function drivers(series: SeriesId, rows: DriverRow[]): Driver[] {
     feedback,
     aggression,
     start,
+    // Contratos y potencial se generan al crear la partida (lib/game/market.ts).
+    potential: pace,
+    salary: 0,
+    contractUntil: 2026,
   }));
 }
 

@@ -1,4 +1,5 @@
 import { clamp, gauss, range, type Rng } from "./rng";
+import { devFactor } from "./staff";
 import type { GameState, Project, ProjectArea, SeriesId, Team } from "./types";
 
 export const AREA_LABELS: Record<SeriesId, Record<ProjectArea, string>> = {
@@ -85,7 +86,7 @@ export function progressProjects(state: GameState, rng: Rng): string[] {
   for (const p of state.projects) {
     p.weeksLeft--;
     if (p.weeksLeft <= 0) {
-      const raw = range(rng, p.gainMin, p.gainMax) * factoryFactor(team);
+      const raw = range(rng, p.gainMin, p.gainMax) * factoryFactor(team) * devFactor(state);
       const gain = applyGain(state, team, p.area, raw);
       if (p.area === "reliability" && team.pu && state.pus[team.pu].worksTeam === team.id) {
         state.pus[team.pu].reliability = clamp(state.pus[team.pu].reliability + gain * 0.6, 40, 100);

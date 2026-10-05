@@ -15,6 +15,7 @@ import type {
   RaceResult,
   SeriesId,
   Team,
+  TyreSet,
   WeatherPlan,
 } from "./types";
 import { earlyRaceWetness, evolveWetness, rainAt, summarizeWeather } from "./weather";
@@ -57,6 +58,8 @@ export interface LapRecord {
   /** Tiempo perdido en el carril de boxes durante esta vuelta (entrada o salida). */
   pitTime: number;
   pitCompound?: Compound;
+  /** Desgaste del juego montado en esa parada (0 si es nuevo). */
+  pitWear?: number;
   /** Fracción de vuelta por detrás de la meta donde el coche queda parado al acabar la vuelta (parrilla tras bandera roja). */
   parkOff?: number;
 }
@@ -133,6 +136,13 @@ export interface CarState {
   liftCoast: boolean;
   flagLap?: number;
   finishTime?: number;
+  /** Juegos de repuesto (solo coches del jugador; los rivales tienen neumáticos ilimitados). */
+  sets?: TyreSet[];
+  /** Juego montado y desgaste final de los ya usados en esta carrera. */
+  setId?: string;
+  setLog: { id: string; wear: number }[];
+  /** Multiplicador de desgaste por lo aprendido en las tandas largas. */
+  wearMult: number;
 }
 
 export type RaceEventType =
@@ -173,6 +183,14 @@ export interface RaceConfig {
   setupQ: Record<string, number>;
   playerTeamId?: string;
   startCompounds?: Record<string, Compound>;
+  /** Juego de salida de cada piloto del jugador (fija el compuesto y el desgaste inicial). */
+  startSets?: Record<string, TyreSet>;
+  /** Juegos de repuesto de los pilotos del jugador. */
+  spareSets?: Record<string, TyreSet[]>;
+  /** Multiplicador de desgaste de neumáticos por piloto. */
+  wearMult?: Record<string, number>;
+  /** Multiplicador de la probabilidad de avería por piloto (componentes gastados). */
+  relMult?: Record<string, number>;
   mustTwo: boolean;
   seed: number;
   weekendId: string;
@@ -324,7 +342,8 @@ export class RaceSim {
     const d = this.cfg.drivers[id];
     const team = this.cfg.teams[d.teamId];
     const isPlayer = this.cfg.playerTeamId === team.id;
-    const chosen = this.cfg.startCompounds?.[id];
+    const startSet = isPlayer ? this.cfg.startSets?.[id] : undefined;
+    const chosen = startSet?.compound ?? this.cfg.startCompounds?.[id];
     let compound: Compound;
     let plan: PlannedStop[] = [];
     if (chosen) {
@@ -340,6 +359,7 @@ export class RaceSim {
       plan = p.stops;
     }
     const cfgS = SERIES_CFG[this.series];
+    const spares = isPlayer ? this.cfg.spareSets?.[id] : undefined;
     return {
       driverId: id,
       teamId: team.id,
@@ -357,7 +377,7 @@ export class RaceSim {
       laps: [],
       compound,
       tyreAge: 0,
-      wear: 0,
+      wear: startSet?.wear ?? 0,
       temp: cfgS.blanketTemp,
       usedDry: isWetTyre(compound) ? [] : [compound],
       usedWet: isWetTyre(compound),
@@ -383,7 +403,45 @@ export class RaceSim {
       startOffset: idx * 0.22,
       setupQ: this.cfg.setupQ[id] ?? 0.8,
       liftCoast: false,
+      sets: spares ? structuredClone(spares) : undefined,
+      setId: startSet?.id,
+      setLog: [],
+      wearMult: this.cfg.wearMult?.[id] ?? 1,
     };
+  }
+
+  /**
+   * Monta el juego menos gastado que quede de `c`; si no queda ninguno, el menos gastado del mismo
+   * tipo (seco o lluvia) y, en último caso, uno ya usado en esta carrera. Devuelve compuesto y desgaste.
+   */
+  private takeSet(car: CarState, c: Compound): { compound: Compound; wear: number } {
+    if (!car.sets) return { compound: c, wear: 0 };
+    if (car.setId) car.setLog.push({ id: car.setId, wear: car.wear });
+    const pickFrom = (pred: (s: TyreSet) => boolean) => car.sets?.filter(pred).sort((a, b) => a.wear - b.wear)[0];
+    const set = pickFrom((s) => s.compound === c) ?? pickFrom((s) => isWetTyre(s.compound) === isWetTyre(c));
+    if (!set) {
+      const old = [...car.setLog].sort((a, b) => a.wear - b.wear)[0];
+      car.setId = old?.id;
+      return { compound: c, wear: Math.max(old?.wear ?? 60, 30) };
+    }
+    car.sets = car.sets.filter((s) => s.id !== set.id);
+    car.setId = set.id;
+    return { compound: set.compound, wear: set.wear };
+  }
+
+  /** Compuestos de seco que todavía puede montar un coche (todos si no lleva la cuenta de juegos). */
+  private availableDry(car: CarState): Compound[] {
+    if (!car.sets) return this.dry;
+    const have = this.dry.filter((c) => car.sets?.some((s) => s.compound === c));
+    return have.length ? have : this.dry;
+  }
+
+  /** Desgaste final de cada juego usado por un piloto en esta carrera. */
+  tyreUsage(driverId: string): { id: string; wear: number }[] {
+    const car = this.car(driverId);
+    const out = [...car.setLog];
+    if (car.setId) out.push({ id: car.setId, wear: car.wear });
+    return out;
   }
 
   private planFrom(d: Driver, offset: number, fixedStart: Compound | undefined, mustTwo: boolean, startWear: number, noisy = true) {
@@ -635,7 +693,7 @@ export class RaceSim {
     const d = this.cfg.drivers[car.driverId];
     const mustOther = this.needsOtherCompound(car);
     let best: { start: Compound; stops: PlannedStop[]; est: number } | null = null;
-    for (const c of this.dry) {
+    for (const c of this.availableDry(car)) {
       const needLater = mustOther && car.usedDry.length > 0 && car.usedDry.every((u) => u === c);
       const p = this.planFrom(d, L, c, needLater, 0);
       if (!best || p.est < best.est) best = p;
@@ -764,8 +822,10 @@ export class RaceSim {
     for (const car of order) {
       let nc = car.pitRequest;
       if (!nc) nc = car.auto ? (this.wet >= 0.82 ? "W" : this.wet >= 0.2 ? "I" : this.dryChoice(car, L)) : car.compound;
+      const fresh = this.takeSet(car, nc);
+      nc = fresh.compound;
       car.compound = nc;
-      car.wear = 0;
+      car.wear = fresh.wear;
       car.tyreAge = 0;
       car.temp = SERIES_CFG[this.series].blanketTemp;
       car.damage = 0;
@@ -971,7 +1031,7 @@ export class RaceSim {
       if (status === "vsc") target -= 18;
       if (status === "red") target -= 30;
       car.temp += (target - car.temp) * 0.55;
-      let rate = sp.wear * this.circuit.wear * STYLE_WEAR[car.style] * (1 + (80 - d.tyre) * 0.008) * tempWearFactor(car.compound, car.temp) * (1 + car.floorDamage * 0.15);
+      let rate = sp.wear * this.circuit.wear * STYLE_WEAR[car.style] * (1 + (80 - d.tyre) * 0.008) * tempWearFactor(car.compound, car.temp) * (1 + car.floorDamage * 0.15) * car.wearMult;
       if (isW && this.wet < 0.25) rate *= 1 + (0.25 - this.wet) * 12;
       if (status === "sc") rate *= 0.25;
       if (status === "vsc") rate *= 0.4;
@@ -995,7 +1055,7 @@ export class RaceSim {
         const lapGuess = t - car.cum;
         const calm = status === "vsc" ? 0.3 : 1;
         const rel = reliabilityRating(team, this.cfg.pus);
-        const pMech = Math.pow(Math.max(0, 100 - rel), 1.5) * 1.6e-5 * ENGINE_REL[engine] * calm;
+        const pMech = Math.pow(Math.max(0, 100 - rel), 1.5) * 1.6e-5 * ENGINE_REL[engine] * calm * (this.cfg.relMult?.[car.driverId] ?? 1);
         if (rng() < pMech) {
           if (rng() < 0.7) {
             this.retire(car, L, pick(rng, MECH_FAILURES), lapGuess);
@@ -1168,24 +1228,27 @@ export class RaceSim {
         }
       }
       if (pit && car.pitRequest) {
-        const nc = car.pitRequest;
+        const fresh = this.takeSet(car, car.pitRequest);
+        const nc = fresh.compound;
         const v = this.openVisit(car, L, t, pit, racing);
         // La parte de la parada que cae en la vuelta de salida (el garaje puede estar pasada la meta).
         car.pitCarry = pit.tout;
         rec.pitCompound = nc;
+        if (fresh.wear > 0) rec.pitWear = fresh.wear;
         const stopAt = v.box < 0 ? v.stopStart : t + pit.tout * 0.5;
-        this.log(stopAt, L, "pit", `${car.code} para en boxes → ${nc} (P${i + 1}) · ${pit.stationary.toFixed(1)} s`, [car.driverId]);
+        const usedTag = fresh.wear > 1 ? " usados" : "";
+        this.log(stopAt, L, "pit", `${car.code} para en boxes → ${nc}${usedTag} (P${i + 1}) · ${pit.stationary.toFixed(1)} s`, [car.driverId]);
         if (pit.slow) this.log(stopAt + pit.stationary, L, "pit", `Parada lenta para ${car.code}: ${pit.stationary.toFixed(1)} s`, [car.driverId]);
-        car.compound = nc;
-        car.wear = 0;
+        car.compound = fresh.compound;
+        car.wear = fresh.wear;
         car.tyreAge = 0;
         car.temp = SERIES_CFG[this.series].blanketTemp;
         car.pits++;
         car.damage = 0;
-        if (isWetTyre(nc)) car.usedWet = true;
-        else if (!car.usedDry.includes(nc)) car.usedDry.push(nc);
+        if (isWetTyre(fresh.compound)) car.usedWet = true;
+        else if (!car.usedDry.includes(fresh.compound)) car.usedDry.push(fresh.compound);
         car.pitRequest = null;
-        if (car.auto && !isWetTyre(nc)) car.plan = car.plan.filter((s) => s.lap > L);
+        if (car.auto && !isWetTyre(fresh.compound)) car.plan = car.plan.filter((s) => s.lap > L);
         if (this.localRng("release", car.driverId, L)() < 0.004) {
           car.penalty += 5;
           this.log(t + pit.tout, L, "penalty", `${car.code}: 5 s de penalización por salida insegura de boxes`, [car.driverId]);
@@ -1645,7 +1708,7 @@ export class RaceSim {
     }
     // Neumáticos nuevos tras una parada o tras la bandera roja (vuelta que acaba parado en parrilla).
     const freshAfter = (r: LapRecord) => !!r.pitCompound || r.parkOff !== undefined;
-    const startWear = prev ? (freshAfter(prev) ? 0 : prev.wear) : 0;
+    const startWear = prev ? (freshAfter(prev) ? prev.pitWear ?? 0 : prev.wear) : (this.cfg.startSets?.[car.driverId]?.wear ?? 0);
     const startFuel = prev ? prev.fuel : this.startFuel;
     const startBat = prev ? prev.battery : 60;
     const startTemp = prev ? (freshAfter(prev) ? SERIES_CFG[this.series].blanketTemp : prev.temp) : SERIES_CFG[this.series].blanketTemp;

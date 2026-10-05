@@ -39,6 +39,22 @@ export function qualiSegments(series: SeriesId, entrants: number, sprint: boolea
   ];
 }
 
+/** Minuto de inicio y duración (min) de cada tanda dentro de la sesión, con las pausas entre tandas. */
+export function segmentTiming(series: SeriesId, sprint: boolean): { start: number; minutes: number }[] {
+  if (series !== "f1") return [{ start: 0, minutes: 30 }];
+  return sprint
+    ? [
+        { start: 0, minutes: 12 },
+        { start: 19, minutes: 10 },
+        { start: 36, minutes: 8 },
+      ]
+    : [
+        { start: 0, minutes: 18 },
+        { start: 25, minutes: 15 },
+        { start: 47, minutes: 12 },
+      ];
+}
+
 function segmentFrac(idx: number, n: number) {
   return n === 1 ? 0.5 : [0.2, 0.55, 0.85][idx] ?? 0.5;
 }
@@ -60,21 +76,34 @@ export function aiQualiChoice(series: SeriesId, circuit: Circuit, wet: number, s
   return { compound: forcedCompound(series, sprint, segIdx, wet) ?? dryCompounds(series, circuit)[0], risk: 1 };
 }
 
-function qualiLap(ctx: QualiCtx, id: string, choice: QualiChoice, wet: number, segIdx: number, rng: Rng) {
+/** Desfase (%) de una vuelta lanzada sin azar: coche, piloto, reglaje, compuesto, humedad y riesgo. */
+export function qualiPct(ctx: QualiCtx, id: string, choice: QualiChoice, wet: number): number {
   const d = ctx.drivers[id];
   const team = ctx.teams[d.teamId];
-  const cfgS = SERIES_CFG[ctx.series];
   const c = choice.compound;
   let pct = basePct(ctx.series, team, d, ctx.pus, ctx.circuit, wet, ctx.setupQ[id] ?? 0.8);
   pct += isWetTyre(c) ? 0 : spec(ctx.series, c).pace * 1.2;
   pct += wetPenalty(c, wet) + wet * 6;
-  pct -= segIdx * 0.15;
   pct += [0.15, 0, -0.2][choice.risk];
-  pct += gauss(rng) * (cfgS.qualiNoise + (100 - d.consistency) * 0.006);
-  const slick = isWetTyre(c) ? 0 : wetPenalty(c, wet);
-  const pMistake = [0.02, 0.05, 0.11][choice.risk] * (1 + wet * 2) * (1 + slick / 5);
+  return pct;
+}
+
+/** Ruido de una vuelta lanzada (% del tiempo), mayor en pilotos poco regulares. */
+export function qualiNoise(ctx: QualiCtx, id: string, rng: Rng): number {
+  return gauss(rng) * (SERIES_CFG[ctx.series].qualiNoise + (100 - ctx.drivers[id].consistency) * 0.006);
+}
+
+/** Probabilidad de cometer un error en una vuelta lanzada. */
+export function mistakeChance(choice: QualiChoice, wet: number): number {
+  const slick = isWetTyre(choice.compound) ? 0 : wetPenalty(choice.compound, wet);
+  return [0.02, 0.05, 0.11][choice.risk] * (1 + wet * 2) * (1 + slick / 5);
+}
+
+function qualiLap(ctx: QualiCtx, id: string, choice: QualiChoice, wet: number, segIdx: number, rng: Rng) {
+  let pct = qualiPct(ctx, id, choice, wet) - segIdx * 0.15;
+  pct += qualiNoise(ctx, id, rng);
   let note: string | undefined;
-  if (rng() < pMistake) {
+  if (rng() < mistakeChance(choice, wet)) {
     if (rng() < 0.5) return { time: null, note: "Vuelta anulada por límites de pista" };
     pct += range(rng, 0.6, 3);
     note = "Error en la vuelta rápida";

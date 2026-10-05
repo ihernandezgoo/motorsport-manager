@@ -48,6 +48,7 @@ export interface Team {
 export interface Driver {
   id: string;
   series: SeriesId;
+  /** Equipo actual; "" si es agente libre (sin asiento esta temporada). */
   teamId: string;
   first: string;
   last: string;
@@ -63,6 +64,14 @@ export interface Driver {
   feedback: number;
   aggression: number;
   start: number;
+  /** Techo de ritmo que puede alcanzar con la experiencia. */
+  potential: number;
+  /** Salario por temporada (M€). En F2 y F3 suele ser negativo: el piloto aporta patrocinio. */
+  salary: number;
+  /** Última temporada de su contrato actual. */
+  contractUntil: number;
+  /** Fichaje cerrado para la próxima temporada (puede ser su propio equipo si ha renovado). */
+  next?: { teamId: string; salary: number; until: number };
 }
 
 export interface Circuit {
@@ -197,9 +206,28 @@ export interface PracticeRun {
 export interface SetupState {
   values: SetupValues;
   optimum: SetupValues;
+  /** Tandas que quedan en la sesión de libres en curso. */
   runsLeft: number;
   runs: PracticeRun[];
   quality: number;
+}
+
+/** Juego de neumáticos de la asignación del fin de semana. */
+export interface TyreSet {
+  id: string;
+  compound: Compound;
+  /** Desgaste acumulado (0..100). */
+  wear: number;
+  /** Ya ha rodado: pierde el pico de agarre de un juego nuevo. */
+  used: boolean;
+}
+
+/** Lo aprendido en las tandas largas de libres: reduce el desgaste en carrera. */
+export interface LongRunData {
+  compound: Compound;
+  laps: number;
+  /** Desgaste medido por vuelta (%). */
+  wearPerLap: number;
 }
 
 export interface WeekendState {
@@ -211,8 +239,16 @@ export interface WeekendState {
   setup: Record<string, SetupState>;
   aiSetup: Record<string, number>;
   quali: Record<string, QualiResult>;
+  /** Tandas de clasificación ya disputadas (para reanudar una clasificación a medias). */
+  qualiProgress?: Record<string, QualiEntry[][]>;
   grids: Record<string, string[]>;
   results: RaceResult[];
+  /** Juegos de neumáticos de los pilotos del jugador. */
+  tyres: Record<string, TyreSet[]>;
+  /** Tandas largas de los pilotos del jugador. */
+  longRuns: Record<string, LongRunData[]>;
+  /** Puestos de sanción en la parrilla del Gran Premio (por cambiar componentes, etc.). */
+  gridPenalty: Record<string, { places: number; reason: string }>;
 }
 
 export type ProjectArea = "aero" | "chassis" | "engine" | "reliability";
@@ -249,6 +285,72 @@ export interface ChampionRecord {
   f3: { driver: string; team: string };
 }
 
+export interface BoardState {
+  /** Confianza de la junta directiva (0..100). Por debajo de cierto nivel, despido. */
+  confidence: number;
+  /** Puesto mínimo en el campeonato de equipos que exige la junta esta temporada. */
+  target: number;
+  /** Puesto que se esperaba del equipo al empezar la temporada (referencia de cada fin de semana). */
+  expected: number;
+  /** Variación de confianza tras el último fin de semana. */
+  lastDelta: number;
+  /** Ya se ha avisado al mánager de que su puesto peligra. */
+  warned: boolean;
+}
+
+export interface JobOffer {
+  teamId: string;
+  reason: string;
+}
+
+export type StaffRole = "technical" | "engineer" | "pitChief";
+
+export interface StaffMember {
+  id: string;
+  name: string;
+  nat: string;
+  age: number;
+  role: StaffRole;
+  rating: number;
+  /** Salario por temporada (M€). */
+  salary: number;
+  contractUntil: number;
+}
+
+export type SponsorTier = "title" | "major" | "minor";
+export type SponsorGoal = "points" | "doublePoints" | "podium" | "win" | "bothFinish" | "beatRival";
+
+export interface Sponsor {
+  id: string;
+  name: string;
+  tier: SponsorTier;
+  /** Pago fijo por fin de semana (M€). */
+  perRace: number;
+  /** Prima por cumplir el objetivo en la carrera principal del fin de semana. */
+  goal: SponsorGoal;
+  bonus: number;
+  /** Última temporada del acuerdo. */
+  until: number;
+}
+
+export type ComponentKind = "ice" | "turbo" | "ers" | "gearbox";
+
+export interface ComponentState {
+  /** Unidades introducidas esta temporada (incluida la montada). */
+  used: number;
+  /** Desgaste de la unidad montada (100 = fin de su vida útil prevista). */
+  wear: number;
+}
+
+export interface CareerRecord {
+  year: number;
+  teamId: string;
+  teamName: string;
+  series: SeriesId;
+  pos: number;
+  target: number;
+}
+
 export interface GameState {
   version: number;
   year: number;
@@ -267,6 +369,22 @@ export interface GameState {
   weekend: WeekendState | null;
   history: ChampionRecord[];
   settings: { autoPause: boolean; defaultSpeed: number };
+  board: BoardState;
+  /** Ofertas de trabajo de otros equipos (al acabar la temporada o tras un despido). */
+  offers: JobOffer[];
+  /** El mánager ha sido despedido y busca equipo. */
+  sacked: boolean;
+  career: CareerRecord[];
+  staff: Record<StaffRole, StaffMember>;
+  staffMarket: StaffMember[];
+  sponsors: Sponsor[];
+  sponsorOffers: Sponsor[];
+  /** Componentes de la unidad de potencia de los pilotos del jugador (solo F1). */
+  components: Record<string, Record<ComponentKind, ComponentState>>;
+  /** Contador para generar identificadores únicos (pilotos nuevos, personal, patrocinadores). */
+  uid: number;
+  /** Temporada en la que los equipos rivales ya han decidido sus renovaciones (abre el mercado). */
+  marketYear: number;
   /** Presente solo en un fin de semana rápido (fuera del modo carrera). */
   quick?: QuickConfig;
 }

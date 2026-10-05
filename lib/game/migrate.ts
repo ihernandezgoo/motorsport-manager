@@ -1,7 +1,39 @@
-import { SAVE_VERSION } from "./season";
+import { CIRCUITS } from "./data/circuits";
+import { rngFor } from "./rng";
+import { initCareer, SAVE_VERSION } from "./season";
+import { makeTyreSets } from "./tyreSets";
 import type { GameState } from "./types";
+import { isSprintWeekend } from "./weekend";
 
 type RawSave = Record<string, unknown> & { version: number };
+
+/**
+ * v1 → v2: carrera de mánager (contratos, junta, personal, patrocinadores, componentes) y, si hay un
+ * fin de semana a medias, sus juegos de neumáticos. Las sesiones del fin de semana en curso se
+ * conservan con su formato antiguo (una sola sesión de libres).
+ */
+function toV2(save: RawSave): RawSave {
+  const s = save as unknown as GameState;
+  for (const d of Object.values(s.drivers)) {
+    d.potential ??= d.pace;
+    d.salary ??= 0;
+    d.contractUntil ??= s.year;
+  }
+  initCareer(s, rngFor(s.seed, s.year, "migrate-v2"));
+  const ws = s.weekend;
+  if (ws) {
+    const wk = s.calendar[ws.weekendIndex];
+    ws.qualiProgress ??= {};
+    ws.gridPenalty ??= {};
+    ws.longRuns ??= {};
+    ws.tyres ??= {};
+    for (const id of Object.keys(ws.setup)) {
+      ws.longRuns[id] ??= [];
+      ws.tyres[id] ??= makeTyreSets(ws.series, CIRCUITS[wk.circuitId], isSprintWeekend(ws.series, wk), id);
+    }
+  }
+  return { ...save, version: 2 };
+}
 
 /**
  * Migraciones de partidas guardadas. `MIGRATIONS[n]` convierte una partida de la versión `n` a la
@@ -12,8 +44,7 @@ type RawSave = Record<string, unknown> & { version: number };
  * Las migraciones reciben objetos ya parseados y pueden mutarlos.
  */
 const MIGRATIONS: Record<number, (save: RawSave) => RawSave> = {
-  // Ejemplo para cuando exista la versión 2:
-  // 1: (s) => ({ ...s, version: 2, contracts: {} }),
+  1: toV2,
 };
 
 export type LoadResult =
